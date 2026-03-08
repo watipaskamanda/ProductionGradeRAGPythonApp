@@ -1,0 +1,160 @@
+import streamlit as st
+import requests
+from dotenv import load_dotenv
+import time
+
+load_dotenv()
+
+st.set_page_config(page_title="PayMaart AI Assistant", page_icon="🤖", layout="wide")
+
+API_URL = "http://localhost:8000"
+
+# Check API connection
+def check_api_connection():
+    try:
+        response = requests.get(f"{API_URL}/docs", timeout=2)
+        return response.status_code == 200
+    except:
+        return False
+
+# API status indicator
+api_status = check_api_connection()
+if not api_status:
+    st.error("🔴 API Server not running! Please start the FastAPI backend first.")
+    st.info("Run `start.bat` or start the API manually: `py -m uvicorn api:app --reload`")
+    st.stop()
+
+# Initialize chat history
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+if "mode" not in st.session_state:
+    st.session_state.mode = "📄 Document Q&A"
+
+# Sidebar
+st.sidebar.title("🤖 PayMaart AI Assistant")
+mode = st.sidebar.radio(
+    "Choose Mode:",
+    ["📄 Document Q&A", "📊 Database Analytics", "📤 Upload Documents"]
+)
+
+# Update mode if changed
+if mode != st.session_state.mode:
+    st.session_state.mode = mode
+    st.session_state.messages = []  # Clear chat when switching modes
+
+# Upload Documents Mode
+if mode == "📤 Upload Documents":
+    st.title("📤 Upload Documents")
+    st.caption("Add new PDFs to the knowledge base")
+    
+    uploaded = st.file_uploader("Choose a PDF", type=["pdf"], accept_multiple_files=False)
+
+    if uploaded is not None:
+        with st.spinner("Processing PDF..."):
+            files = {"file": (uploaded.name, uploaded.getvalue(), "application/pdf")}
+            response = requests.post(f"{API_URL}/ingest", files=files)
+            
+            if response.status_code == 200:
+                st.success(response.json()["message"])
+            else:
+                st.error(f"Error: {response.text}")
+
+# Chat Modes
+else:
+    # Title based on mode
+    if mode == "📄 Document Q&A":
+        st.title("📄 Document Q&A Chat")
+        st.caption("Ask questions about your uploaded documents")
+        placeholder = "Ask me about your documents..."
+        endpoint = "/query"
+    else:
+        st.title("📊 Database Analytics Chat")
+        st.caption("Ask questions about your live transaction data")
+        st.info("💡 Try: 'How many transactions?' or 'Show credit transactions'")
+        placeholder = "Ask me about your data..."
+        endpoint = "/query/database"
+
+    # Display chat messages
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+            
+            # Show SQL query for database mode
+            if message["role"] == "assistant" and "sql" in message:
+                with st.expander("🔍 View SQL Query"):
+                    st.code(message["sql"], language="sql")
+
+    # Chat input
+    if prompt := st.chat_input(placeholder):
+        # Add user message to chat history
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        
+        # Display user message
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        # Get AI response
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                try:
+                    if mode == "📄 Document Q&A":
+                        payload = {"question": prompt, "top_k": 5}
+                        response = requests.post(f"{API_URL}{endpoint}", json=payload, timeout=30)
+                        
+                        if response.status_code == 200:
+                            data = response.json()
+                            answer = data["answer"]
+                            
+                            # Show sources if available
+                            if data.get("sources"):
+                                answer += "\n\n**Sources:**\n"
+                                for source in data["sources"]:
+                                    answer += f"- {source}\n"
+                            
+                            st.markdown(answer)
+                            st.session_state.messages.append({"role": "assistant", "content": answer})
+                        else:
+                            error_msg = f"❌ Error: {response.text}"
+                            st.markdown(error_msg)
+                            st.session_state.messages.append({"role": "assistant", "content": error_msg})
+                    
+                    else:  # Database Analytics
+                        payload = {"question": prompt}
+                        response = requests.post(f"{API_URL}{endpoint}", json=payload, timeout=30)
+                        
+                        if response.status_code == 200:
+                            data = response.json()
+                            answer = data["answer"]
+                            sql = data.get("sql", "")
+                            
+                            st.markdown(answer)
+                            
+                            # Show SQL query
+                            if sql:
+                                with st.expander("🔍 View SQL Query"):
+                                    st.code(sql, language="sql")
+                            
+                            # Store message with SQL for history
+                            message_data = {"role": "assistant", "content": answer}
+                            if sql:
+                                message_data["sql"] = sql
+                            st.session_state.messages.append(message_data)
+                        else:
+                            error_msg = f"❌ Error: {response.text}"
+                            st.markdown(error_msg)
+                            st.session_state.messages.append({"role": "assistant", "content": error_msg})
+                
+                except requests.exceptions.ConnectionError:
+                    error_msg = "❌ Connection failed! Make sure the FastAPI server is running on port 8000."
+                    st.markdown(error_msg)
+                    st.session_state.messages.append({"role": "assistant", "content": error_msg})
+                except Exception as e:
+                    error_msg = f"❌ Error: {str(e)}"
+                    st.markdown(error_msg)
+                    st.session_state.messages.append({"role": "assistant", "content": error_msg})
+
+    # Clear chat button
+    if st.sidebar.button("🗑️ Clear Chat"):
+        st.session_state.messages = []
+        st.rerun()
