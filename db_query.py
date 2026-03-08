@@ -39,6 +39,8 @@ IMPORTANT SQL Notes:
 - For recent data: created_at > EXTRACT(EPOCH FROM NOW() - INTERVAL '30 days')
 - Transaction types: 'float', 'pay_in', 'g2p_pay_in', 'payout_approved', 'settlement', 'excess_float'
 - Type values: 'credit', 'debit'
+- For time differences, use subqueries or CTEs, not window functions in aggregates
+- For average time between transactions: use WITH clause to calculate differences first
 
 Example questions:
 - "How many transactions are there?"
@@ -50,6 +52,11 @@ Example questions:
 - "Show me pay_in transactions"
 - "What's the average transaction amount?"
 - "Show debit transactions"
+- "Count transactions by type"
+- "Sum of all positive transaction amounts"
+- "Average transaction amount per day"
+- "Most recent 10 transactions"
+- "Transactions grouped by bank_id"
 """
 
 def get_db_connection():
