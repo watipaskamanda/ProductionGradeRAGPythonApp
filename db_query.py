@@ -33,7 +33,8 @@ Tables:
 
 IMPORTANT SQL Notes:
 - created_at is Unix timestamp (bigint), convert with: TO_TIMESTAMP(created_at::double precision)
-- All amount fields are decimal, cast for comparisons: amount_field::numeric > 1000000
+- ALWAYS cast decimal fields: transaction_amount::numeric, closing_balance::numeric
+- For SUM/AVG on amounts: SUM(transaction_amount::numeric), AVG(transaction_amount::numeric)
 - For date filtering: EXTRACT(MONTH FROM TO_TIMESTAMP(created_at::double precision)) = 10
 - For year filtering: EXTRACT(YEAR FROM TO_TIMESTAMP(created_at::double precision)) = 2024
 - For recent data: created_at > EXTRACT(EPOCH FROM NOW() - INTERVAL '30 days')
@@ -141,6 +142,38 @@ Provide a clear, concise answer."""
     
     return response.choices[0].message.content.strip()
 
+def detect_chart_data(query_result: dict, question: str) -> dict:
+    """Detect if query results can be visualized as charts."""
+    if "error" in query_result or not query_result.get("rows"):
+        return {}
+    
+    columns = query_result["columns"]
+    rows = query_result["rows"]
+    
+    # Check for chart-worthy patterns
+    chart_keywords = ["count", "sum", "total", "by", "per", "group", "graph", "chart", "show"]
+    has_chart_keyword = any(keyword in question.lower() for keyword in chart_keywords)
+    
+    # Must have exactly 2 columns and reasonable number of rows
+    if len(columns) == 2 and len(rows) <= 50 and len(rows) > 0:
+        try:
+            # Try to convert second column to numeric
+            chart_data = {}
+            for row in rows:
+                key = str(row[0]) if row[0] is not None else "Unknown"
+                value = float(row[1]) if row[1] is not None and str(row[1]).replace('.','').replace('-','').isdigit() else 1
+                chart_data[key] = value
+            
+            if chart_data and (has_chart_keyword or len(rows) <= 10):
+                return {
+                    "type": "bar",
+                    "data": chart_data
+                }
+        except (ValueError, TypeError, IndexError):
+            pass
+    
+    return {}
+
 def query_database(question: str) -> dict:
     """Main function: Question → SQL → Execute → Answer."""
     # Convert to SQL
@@ -152,9 +185,13 @@ def query_database(question: str) -> dict:
     # Format answer
     answer = format_answer(question, results)
     
+    # Detect chart data
+    chart_data = detect_chart_data(results, question)
+    
     return {
         "question": question,
         "sql": sql,
         "answer": answer,
-        "raw_results": results
+        "raw_results": results,
+        "chart_data": chart_data
     }

@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 from dotenv import load_dotenv
 import time
+import pandas as pd
 
 load_dotenv()
 
@@ -80,6 +81,14 @@ else:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
             
+            # Show chart if available
+            if message["role"] == "assistant" and "chart_data" in message:
+                chart_data = message["chart_data"]
+                if chart_data and chart_data.get("data"):
+                    st.subheader("📊 Visualization")
+                    chart_df = pd.DataFrame(list(chart_data["data"].items()), columns=["Category", "Value"])
+                    st.bar_chart(chart_df.set_index("Category"))
+            
             # Show SQL query for database mode
             if message["role"] == "assistant" and "sql" in message:
                 with st.expander("🔍 View SQL Query"):
@@ -127,8 +136,20 @@ else:
                             data = response.json()
                             answer = data["answer"]
                             sql = data.get("sql", "")
+                            chart_data = data.get("chart_data", {})
                             
                             st.markdown(answer)
+                            
+                            # Show chart if available
+                            if chart_data and chart_data.get("data"):
+                                st.subheader("📊 Visualization")
+                                try:
+                                    chart_df = pd.DataFrame(list(chart_data["data"].items()), columns=["Category", "Value"])
+                                    st.bar_chart(chart_df.set_index("Category"))
+                                except Exception as e:
+                                    st.error(f"Chart error: {e}")
+                            elif "graph" in prompt.lower() or "chart" in prompt.lower():
+                                st.info("💡 Try asking: 'Count transactions by type' or 'Sum amounts by bank_id' for charts")
                             
                             # Show SQL query
                             if sql:
@@ -139,6 +160,8 @@ else:
                             message_data = {"role": "assistant", "content": answer}
                             if sql:
                                 message_data["sql"] = sql
+                            if chart_data:
+                                message_data["chart_data"] = chart_data
                             st.session_state.messages.append(message_data)
                         else:
                             error_msg = f"❌ Error: {response.text}"
