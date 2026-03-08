@@ -1,12 +1,47 @@
-# Python-generated files
+# Python
 __pycache__/
-*.py[oc]
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
 build/
+develop-eggs/
 dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
 wheels/
-*.egg-info
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Virtual environments
-.venv
-/uploads
+# Environment variables
 .env
+.env.local
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Project specific
+uploads/
+qdrant_storage/
+.qdrant_fs_check
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
