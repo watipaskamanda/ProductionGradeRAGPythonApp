@@ -4,6 +4,7 @@ from pathlib import Path
 import uuid
 from data_loader import load_and_chunk_pdf, embed_texts
 from vector_db import QdrantStorage
+from db_query import query_database
 from groq import Groq
 import os
 from dotenv import load_dotenv
@@ -22,6 +23,14 @@ class QueryResponse(BaseModel):
     answer: str
     sources: list[str]
     num_contexts: int
+
+class DBQueryRequest(BaseModel):
+    question: str
+
+class DBQueryResponse(BaseModel):
+    question: str
+    sql: str
+    answer: str
 
 @app.post("/ingest")
 async def ingest_pdf(file: UploadFile = File(...)):
@@ -84,6 +93,16 @@ async def query_rag(request: QueryRequest):
         answer=answer,
         sources=found["sources"],
         num_contexts=len(found["contexts"])
+    )
+
+@app.post("/query/database", response_model=DBQueryResponse)
+async def query_db(request: DBQueryRequest):
+    """Ask questions about live database data (Text-to-SQL)."""
+    result = query_database(request.question)
+    return DBQueryResponse(
+        question=result["question"],
+        sql=result["sql"],
+        answer=result["answer"]
     )
 
 @app.get("/health")
