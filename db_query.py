@@ -16,26 +16,29 @@ Tables:
   * id (uuid)
   * transaction_id (varchar)
   * transaction_code (varchar) 
-  * transaction_type (varchar)
+  * transaction_type (varchar) -- Values: 'float', 'pay_in', 'g2p_pay_in', 'payout_approved', 'settlement', 'excess_float'
   * transaction_amount (decimal) -- Use ::numeric for comparisons
-  * created_at (bigint) -- Unix timestamp, use TO_TIMESTAMP(created_at) to convert
+  * created_at (bigint) -- Unix timestamp, use TO_TIMESTAMP(created_at::double precision) to convert
   * sender_id (varchar)
   * entered_by (varchar)
   * reciever_id (varchar)
   * pop_file_key (text)
   * pop_file_ref_no (varchar)
   * bank_id (varchar)
-  * type (varchar)
-  * closing_balance (decimal)
+  * type (varchar) -- Values: 'credit', 'debit'
+  * closing_balance (decimal) -- Use ::numeric for comparisons
   * flagged (boolean)
-  * closing_balance_ptbat (decimal)
-  * sender_closing_balance (decimal)
+  * closing_balance_ptbat (decimal) -- Use ::numeric for comparisons
+  * sender_closing_balance (decimal) -- Use ::numeric for comparisons
 
 IMPORTANT SQL Notes:
 - created_at is Unix timestamp (bigint), convert with: TO_TIMESTAMP(created_at::double precision)
-- transaction_amount is decimal, cast for comparisons: transaction_amount::numeric > 1000000
+- All amount fields are decimal, cast for comparisons: amount_field::numeric > 1000000
 - For date filtering: EXTRACT(MONTH FROM TO_TIMESTAMP(created_at::double precision)) = 10
+- For year filtering: EXTRACT(YEAR FROM TO_TIMESTAMP(created_at::double precision)) = 2024
 - For recent data: created_at > EXTRACT(EPOCH FROM NOW() - INTERVAL '30 days')
+- Transaction types: 'float', 'pay_in', 'g2p_pay_in', 'payout_approved', 'settlement', 'excess_float'
+- Type values: 'credit', 'debit'
 
 Example questions:
 - "How many transactions are there?"
@@ -44,6 +47,9 @@ Example questions:
 - "What are the different transaction types?"
 - "Show transactions above 1 million"
 - "Transactions from October 2024"
+- "Show me pay_in transactions"
+- "What's the average transaction amount?"
+- "Show debit transactions"
 """
 
 def get_db_connection():
