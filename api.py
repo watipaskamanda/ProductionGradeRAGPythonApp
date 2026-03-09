@@ -27,6 +27,7 @@ class QueryResponse(BaseModel):
 class DBQueryRequest(BaseModel):
     question: str
     chat_history: list = []
+    currency: str = "MWK"
 
 class DBQueryResponse(BaseModel):
     question: str
@@ -103,7 +104,7 @@ async def query_rag(request: QueryRequest):
 @app.post("/query/database", response_model=DBQueryResponse)
 async def query_db(request: DBQueryRequest):
     """Ask questions about live database data (Advanced Text-to-SQL with Planning)."""
-    result = query_database(request.question, request.chat_history)
+    result = query_database(request.question, request.chat_history, request.currency)
     return DBQueryResponse(
         question=result["question"],
         plan=result["plan"],

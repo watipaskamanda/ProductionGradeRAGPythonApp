@@ -39,6 +39,17 @@ mode = st.sidebar.radio(
     ["📄 Document Q&A", "📊 Database Analytics", "📤 Upload Documents"]
 )
 
+# Currency selection for Database Analytics
+if mode == "📊 Database Analytics":
+    currency = st.sidebar.selectbox(
+        "💰 Currency:",
+        ["MWK (Malawi Kwacha)", "USD (US Dollar)"],
+        index=0
+    )
+    currency_code = "MWK" if "MWK" in currency else "USD"
+else:
+    currency_code = "USD"
+
 # Update mode if changed
 if mode != st.session_state.mode:
     st.session_state.mode = mode
@@ -139,7 +150,7 @@ else:
                                 "sql": msg.get("sql", "")
                             })
                         
-                        payload = {"question": prompt, "chat_history": chat_history}
+                        payload = {"question": prompt, "chat_history": chat_history, "currency": currency_code}
                         response = requests.post(f"{API_URL}{endpoint}", json=payload, timeout=30)
                         
                         if response.status_code == 200:
