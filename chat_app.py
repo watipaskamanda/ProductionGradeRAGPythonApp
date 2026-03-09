@@ -93,12 +93,17 @@ else:
             st.markdown(message["content"])
             
             # Show chart if available
-            if message["role"] == "assistant" and "chart_data" in message:
-                chart_data = message["chart_data"]
-                if chart_data and chart_data.get("data"):
+            if message["role"] == "assistant" and "chart_config" in message:
+                chart_config = message["chart_config"]
+                if chart_config and chart_config.get("data"):
                     st.subheader("📊 Visualization")
-                    chart_df = pd.DataFrame(list(chart_data["data"].items()), columns=["Category", "Value"])
-                    st.bar_chart(chart_df.set_index("Category"))
+                    try:
+                        chart_df = pd.DataFrame(list(chart_config["data"].items()), columns=["Category", "Value"])
+                        if chart_config.get("type") == "pie_chart":
+                            st.write(f"**{chart_config.get('title', 'Chart')}**")
+                        st.bar_chart(chart_df.set_index("Category"))
+                    except Exception as e:
+                        st.error(f"Chart error: {e}")
             
             # Show SQL query for database mode
             if message["role"] == "assistant" and "sql" in message:

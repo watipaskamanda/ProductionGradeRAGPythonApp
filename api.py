@@ -36,6 +36,7 @@ class DBQueryResponse(BaseModel):
     answer: str
     markdown_table: str = ""
     chart_config: dict = {}
+    suggested_visualizations: list = []
     metadata: dict = {}
 
 @app.post("/ingest")
@@ -112,6 +113,7 @@ async def query_db(request: DBQueryRequest):
         answer=result["answer"],
         markdown_table=result["markdown_table"],
         chart_config=result["chart_config"],
+        suggested_visualizations=result.get("suggested_visualizations", []),
         metadata=result["metadata"]
     )
 
