@@ -33,7 +33,7 @@ if "mode" not in st.session_state:
     st.session_state.mode = "📄 Document Q&A"
 
 # Sidebar
-st.sidebar.title("🤖 PayMaart AI Assistant")
+st.sidebar.title("🤖 BIZINEZI AI Assistant")
 mode = st.sidebar.radio(
     "Choose Mode:",
     ["📄 Document Q&A", "📊 Database Analytics", "📤 Upload Documents"]
@@ -122,7 +122,10 @@ else:
 
         # Get AI response
         with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
+            message_placeholder = st.empty()
+            
+            # Simulate streaming response
+            with st.spinner("Analyzing..."):
                 try:
                     if mode == "📄 Document Q&A":
                         payload = {"question": prompt, "top_k": 5}
@@ -166,28 +169,41 @@ else:
                             markdown_table = data.get("markdown_table", "")
                             chart_config = data.get("chart_config", {})
                             
-                            st.markdown(answer)
-                            
-                            # Show markdown table if available
+                            # Simulate streaming effect for professional feel
+                            if len(answer) > 50:
+                                displayed_text = ""
+                                for i, char in enumerate(answer):
+                                    displayed_text += char
+                                    if i % 3 == 0:  # Update every 3 characters for smoother effect
+                                        message_placeholder.markdown(displayed_text + "▌")
+                                        time.sleep(0.02)
+                                message_placeholder.markdown(answer)
+                            else:
+                                st.markdown(answer)
                             if markdown_table:
                                 st.subheader("📊 Data Table")
                                 st.markdown(markdown_table)
+                            elif "No results found" in answer or "No data" in answer:
+                                st.warning("📋 No data found for this query. Try checking the date range or adjusting your filters.")
                             
                             # Show chart if available
                             if chart_config and chart_config.get("data"):
                                 st.subheader("📈 Visualization")
                                 try:
                                     chart_df = pd.DataFrame(list(chart_config["data"].items()), columns=["Category", "Value"])
-                                    if chart_config.get("type") == "pie_chart":
+                                    chart_type = chart_config.get("type", "bar_chart")
+                                    
+                                    if chart_type == "pie_chart":
                                         st.write(f"**{chart_config.get('title', 'Chart')}**")
-                                        # Use bar chart for pie chart visualization in Streamlit
                                         st.bar_chart(chart_df.set_index("Category"))
+                                    elif chart_type == "line_chart":
+                                        st.line_chart(chart_df.set_index("Category"))
                                     else:
                                         st.bar_chart(chart_df.set_index("Category"))
                                 except Exception as e:
                                     st.error(f"Chart error: {e}")
                             elif "chart" in prompt.lower() or "visualize" in prompt.lower():
-                                st.info("💡 Try asking: 'Count transactions by type' or 'Sum amounts by bank_id' for charts")
+                                st.warning("No data available for visualization. Try asking: 'Count transactions by type' or 'Sum amounts by bank_id'")
                             
                             # Show SQL query only on errors or when debugging
                             if sql and ("error" in data.get("answer", "").lower() or "debug" in prompt.lower()):
