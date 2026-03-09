@@ -26,11 +26,16 @@ class QueryResponse(BaseModel):
 
 class DBQueryRequest(BaseModel):
     question: str
+    chat_history: list = []
 
 class DBQueryResponse(BaseModel):
     question: str
+    plan: dict
     sql: str
     answer: str
+    markdown_table: str = ""
+    chart_config: dict = {}
+    metadata: dict = {}
 
 @app.post("/ingest")
 async def ingest_pdf(file: UploadFile = File(...)):
@@ -97,12 +102,16 @@ async def query_rag(request: QueryRequest):
 
 @app.post("/query/database", response_model=DBQueryResponse)
 async def query_db(request: DBQueryRequest):
-    """Ask questions about live database data (Text-to-SQL)."""
-    result = query_database(request.question)
+    """Ask questions about live database data (Advanced Text-to-SQL with Planning)."""
+    result = query_database(request.question, request.chat_history)
     return DBQueryResponse(
         question=result["question"],
+        plan=result["plan"],
         sql=result["sql"],
-        answer=result["answer"]
+        answer=result["answer"],
+        markdown_table=result["markdown_table"],
+        chart_config=result["chart_config"],
+        metadata=result["metadata"]
     )
 
 @app.get("/health")

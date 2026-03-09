@@ -65,6 +65,60 @@ elif mode == "📊 Database Analytics":
                     st.subheader("Answer")
                     st.write(data["answer"])
                     
+                    # Show raw data if available
+                    if "raw_results" in data and data["raw_results"].get("rows"):
+                        import pandas as pd
+                        import plotly.express as px
+                        
+                        rows = data["raw_results"]["rows"]
+                        columns = data["raw_results"]["columns"]
+                        
+                        if rows:
+                            df = pd.DataFrame(rows, columns=columns)
+                            
+                            # Show data table
+                            with st.expander("📊 View Data Table"):
+                                st.dataframe(df)
+                            
+                            # Auto-generate charts based on data
+                            if len(df.columns) >= 2 and len(df) > 1:
+                                st.subheader("📈 Data Visualization")
+                                
+                                # Detect numeric columns for charts
+                                numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+                                text_cols = df.select_dtypes(include=['object', 'string']).columns.tolist()
+                                
+                                if len(numeric_cols) >= 1 and len(text_cols) >= 1:
+                                    # Bar chart
+                                    fig_bar = px.bar(
+                                        df, 
+                                        x=text_cols[0], 
+                                        y=numeric_cols[0],
+                                        title=f"{numeric_cols[0]} by {text_cols[0]}"
+                                    )
+                                    st.plotly_chart(fig_bar, use_container_width=True)
+                                    
+                                    # If multiple numeric columns, show comparison
+                                    if len(numeric_cols) >= 2:
+                                        fig_multi = px.bar(
+                                            df, 
+                                            x=text_cols[0], 
+                                            y=numeric_cols[:2],
+                                            title=f"Comparison: {' vs '.join(numeric_cols[:2])}",
+                                            barmode='group'
+                                        )
+                                        st.plotly_chart(fig_multi, use_container_width=True)
+                                
+                                elif len(numeric_cols) >= 2:
+                                    # Scatter plot for numeric data
+                                    fig_scatter = px.scatter(
+                                        df, 
+                                        x=numeric_cols[0], 
+                                        y=numeric_cols[1],
+                                        title=f"{numeric_cols[1]} vs {numeric_cols[0]}"
+                                    )
+                                    st.plotly_chart(fig_scatter, use_container_width=True)
+                    
                     with st.expander("🔍 View SQL Query"):
                         st.code(data["sql"], language="sql")
                 else:

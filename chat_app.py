@@ -129,26 +129,47 @@ else:
                             st.session_state.messages.append({"role": "assistant", "content": error_msg})
                     
                     else:  # Database Analytics
-                        payload = {"question": prompt}
+                        # Prepare chat history for context
+                        chat_history = []
+                        for msg in st.session_state.messages[-5:]:  # Last 5 messages for context
+                            chat_history.append({
+                                "role": msg["role"],
+                                "content": msg["content"],
+                                "question": msg.get("question", ""),
+                                "sql": msg.get("sql", "")
+                            })
+                        
+                        payload = {"question": prompt, "chat_history": chat_history}
                         response = requests.post(f"{API_URL}{endpoint}", json=payload, timeout=30)
                         
                         if response.status_code == 200:
                             data = response.json()
                             answer = data["answer"]
                             sql = data.get("sql", "")
-                            chart_data = data.get("chart_data", {})
+                            markdown_table = data.get("markdown_table", "")
+                            chart_config = data.get("chart_config", {})
                             
                             st.markdown(answer)
                             
+                            # Show markdown table if available
+                            if markdown_table:
+                                st.subheader("📊 Data Table")
+                                st.markdown(markdown_table)
+                            
                             # Show chart if available
-                            if chart_data and chart_data.get("data"):
-                                st.subheader("📊 Visualization")
+                            if chart_config and chart_config.get("data"):
+                                st.subheader("📈 Visualization")
                                 try:
-                                    chart_df = pd.DataFrame(list(chart_data["data"].items()), columns=["Category", "Value"])
-                                    st.bar_chart(chart_df.set_index("Category"))
+                                    chart_df = pd.DataFrame(list(chart_config["data"].items()), columns=["Category", "Value"])
+                                    if chart_config.get("type") == "pie_chart":
+                                        st.write(f"**{chart_config.get('title', 'Chart')}**")
+                                        # Use bar chart for pie chart visualization in Streamlit
+                                        st.bar_chart(chart_df.set_index("Category"))
+                                    else:
+                                        st.bar_chart(chart_df.set_index("Category"))
                                 except Exception as e:
                                     st.error(f"Chart error: {e}")
-                            elif "graph" in prompt.lower() or "chart" in prompt.lower():
+                            elif "chart" in prompt.lower() or "visualize" in prompt.lower():
                                 st.info("💡 Try asking: 'Count transactions by type' or 'Sum amounts by bank_id' for charts")
                             
                             # Show SQL query
@@ -156,12 +177,12 @@ else:
                                 with st.expander("🔍 View SQL Query"):
                                     st.code(sql, language="sql")
                             
-                            # Store message with SQL for history
+                            # Store message with all data for history
                             message_data = {"role": "assistant", "content": answer}
                             if sql:
                                 message_data["sql"] = sql
-                            if chart_data:
-                                message_data["chart_data"] = chart_data
+                            if chart_config:
+                                message_data["chart_config"] = chart_config
                             st.session_state.messages.append(message_data)
                         else:
                             error_msg = f"❌ Error: {response.text}"
