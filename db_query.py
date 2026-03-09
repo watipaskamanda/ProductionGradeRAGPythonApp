@@ -92,7 +92,32 @@ class AnalystSession:
         self.last_question = question
         self.last_plan = plan
 
-session = AnalystSession()
+def is_conversational_intent(question: str, chat_history: list = None) -> bool:
+    """Check if user input is conversational rather than data analysis intent."""
+    question_lower = question.lower().strip()
+    
+    # Greetings and casual chat
+    conversational_patterns = [
+        'hi', 'hello', 'hey', 'good morning', 'good afternoon', 'good evening',
+        'how are you', 'thanks', 'thank you', 'bye', 'goodbye', 'see you',
+        'what can you do', 'help', 'what is this', 'who are you'
+    ]
+    
+    return any(pattern in question_lower for pattern in conversational_patterns)
+
+def get_chat_context(chat_history: list) -> str:
+    """Extract relevant context from chat history for memory."""
+    if not chat_history:
+        return ""
+    
+    context_parts = []
+    for msg in chat_history[-3:]:
+        if msg.get("role") == "user":
+            context_parts.append(f"User previously asked: {msg.get('content', '')}")
+        elif msg.get("role") == "assistant" and msg.get("sql"):
+            context_parts.append(f"Previous analysis: {msg.get('question', '')}")
+    
+    return "\n".join(context_parts)
 
 def get_visualization_options(results):
     """Get all compatible visualization types for the result set."""
@@ -351,61 +376,51 @@ def format_advanced_answer(question: str, query_result: dict, plan: dict, curren
         return base_answer
 
 def query_database(question: str, chat_history: list = None, currency: str = "MWK") -> dict:
-    """Refined pipeline with Dynamic Hallucination Guard and Session Memory."""
+    """Refined pipeline with conversational intent detection and memory."""
     question_lower = question.lower().strip()
     
-    # Check for "these/those" questions that can reuse session data
-    if any(word in question_lower for word in ['these', 'those', 'that', 'them']) and session.last_results:
-        if any(word in question_lower for word in ['chart', 'graph', 'visualize', 'plot']):
-            best_viz = get_best_viz(session.last_plan, session.last_results)
-            
-            chart_config = {}
-            if best_viz in ["pie_chart", "bar_chart", "line_chart"] and len(session.last_results.get("columns", [])) == 2:
-                chart_data = {}
-                for row in session.last_results["rows"]:
-                    key = str(row[0]) if row[0] is not None else "Unknown"
-                    try:
-                        value = float(row[1]) if row[1] is not None else 0
-                        chart_data[key] = value
-                    except:
-                        chart_data[key] = 1
-                
-                chart_config = {
-                    "type": best_viz,
-                    "data": chart_data,
-                    "title": f"Visualization of {session.last_question}",
-                    "x_label": session.last_results["columns"][0],
-                    "y_label": session.last_results["columns"][1]
-                }
-            
-            return {
-                "question": question,
-                "plan": {"analysis_type": "visualization", "explanation": f"Visualizing: {session.last_question}"},
-                "sql": f"-- Reusing: {session.last_question}",
-                "answer": f"**Analysis**: Visualizing: {session.last_question}\n\nSee the {best_viz.replace('_', ' ')} below.",
-                "markdown_table": create_markdown_table(session.last_results, currency),
-                "chart_config": chart_config,
-                "metadata": {"reused_session": True, "visualization_type": best_viz}
-            }
+    # STEP 0: Check for conversational intent first
+    if is_conversational_intent(question, chat_history):
+        chat_context = get_chat_context(chat_history) if chat_history else ""
+        
+        # Generate contextual greeting response
+        if any(word in question_lower for word in ['hi', 'hello', 'hey', 'good morning', 'good afternoon']):
+            base_greeting = "Hi! I'm your transaction data analyst. I can help you explore your financial data with questions like:"
+        elif any(word in question_lower for word in ['thanks', 'thank you']):
+            base_greeting = "You're welcome! I'm here whenever you need transaction insights. Try asking:"
+        elif any(word in question_lower for word in ['help', 'what can you do']):
+            base_greeting = "I can analyze your transaction database! Here are some examples:"
+        else:
+            base_greeting = "I'm here to help with your transaction data analysis. You can ask:"
+        
+        suggestions = [
+            "• 'How many transactions were there last month?'",
+            "• 'Show me high value transactions'",
+            "• 'What's the total transaction amount by type?'",
+            "• 'Plot monthly transaction trends'"
+        ]
+        
+        answer = f"{base_greeting}\n\n" + "\n".join(suggestions)
+        if chat_context:
+            answer += f"\n\n*I remember our previous conversation and can build on that context.*"
+        
+        return {
+            "question": question,
+            "plan": {"analysis_type": "conversational"},
+            "sql": "-- No SQL needed for conversation",
+            "answer": answer,
+            "markdown_table": "",
+            "chart_config": {},
+            "suggested_visualizations": [],
+            "metadata": {"conversational": True, "has_context": bool(chat_context)}
+        }
     
-    # Build context from chat history
-    context = ""
+    # Build context from chat history with memory
+    context = get_chat_context(chat_history)
     if chat_history:
         for msg in chat_history[-3:]:
             if msg.get("role") == "assistant" and "sql" in msg:
-                context += f"Previous query: {msg.get('question', '')} → {msg.get('sql', '')}\n"
-    
-    # Handle greetings
-    if question_lower in ['hi', 'hello', 'hey', 'good morning', 'good afternoon']:
-        return {
-            "question": question,
-            "plan": {"analysis_type": "greeting"},
-            "sql": "-- No SQL needed",
-            "answer": "Hi! How are you? I can help you analyze your transaction data. Try asking questions like 'How many transactions are there?' or 'What's the total transaction amount?'",
-            "markdown_table": "",
-            "chart_config": {},
-            "metadata": {"greeting": True}
-        }
+                context += f"\nPrevious query: {msg.get('question', '')} → {msg.get('sql', '')}"
     
     # Check if database-related
     db_keywords = ['transaction', 'amount', 'count', 'total', 'sum', 'show', 'list', 'how many', 'what is', 'find', 'search', 'visualize', 'chart', 'graph', 'pie', 'bar']

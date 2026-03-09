@@ -105,10 +105,11 @@ else:
                     except Exception as e:
                         st.error(f"Chart error: {e}")
             
-            # Show SQL query for database mode
+            # Show SQL query only for errors or debug
             if message["role"] == "assistant" and "sql" in message:
-                with st.expander("🔍 View SQL Query"):
-                    st.code(message["sql"], language="sql")
+                if "error" in message["content"].lower() or "debug" in message.get("question", "").lower():
+                    with st.expander("🔍 View SQL Query (Debug)"):
+                        st.code(message["sql"], language="sql")
 
     # Chat input
     if prompt := st.chat_input(placeholder):
@@ -188,9 +189,9 @@ else:
                             elif "chart" in prompt.lower() or "visualize" in prompt.lower():
                                 st.info("💡 Try asking: 'Count transactions by type' or 'Sum amounts by bank_id' for charts")
                             
-                            # Show SQL query
-                            if sql:
-                                with st.expander("🔍 View SQL Query"):
+                            # Show SQL query only on errors or when debugging
+                            if sql and ("error" in data.get("answer", "").lower() or "debug" in prompt.lower()):
+                                with st.expander("🔍 View SQL Query (Debug)"):
                                     st.code(sql, language="sql")
                             
                             # Store message with all data for history
