@@ -39,6 +39,23 @@ mode = st.sidebar.radio(
     ["📄 Document Q&A", "📊 Database Analytics", "📤 Upload Documents"]
 )
 
+# User level selection for progressive disclosure
+if mode == "📊 Database Analytics":
+    user_level = st.sidebar.selectbox(
+        "👤 User Level:",
+        ["Business User", "Data Analyst", "Developer"],
+        index=0
+    )
+    user_level_code = user_level.split()[0].lower()  # "business", "data", "developer"
+    
+    # Debug mode toggle for advanced users
+    debug_mode = False
+    if user_level_code in ["data", "developer"]:
+        debug_mode = st.sidebar.checkbox("🔧 Debug Mode", value=False)
+else:
+    user_level_code = "business"
+    debug_mode = False
+
 # Currency selection for Database Analytics
 if mode == "📊 Database Analytics":
     currency = st.sidebar.selectbox(

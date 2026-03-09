@@ -9,3 +9,6 @@ torch
 pypdf
 streamlit
 python-multipart
+psycopg2-binary
+pandas
+requests

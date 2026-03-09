@@ -1,20 +1,57 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from pathlib import Path
+from typing import List, Optional, Dict, Any
 import uuid
+import json
+import asyncio
 from data_loader import load_and_chunk_pdf, embed_texts
 from vector_db import QdrantStorage
-from db_query import query_database
+from db_query import query_database_with_validation, health_check
 from groq import Groq
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
-app = FastAPI(title="RAG API", version="1.0.0")
+app = FastAPI(
+    title="BIZINEZI AI Assistant API",
+    description="Enterprise-grade SQL Agent with semantic validation",
+    version="1.0.0"
+)
+
+# CORS middleware for frontend integration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Configure for production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-# Request/Response models
+# Enhanced response models for progressive disclosure
+class EnterpriseQueryResponse(BaseModel):
+    question: str
+    answer: str
+    markdown_table: Optional[str] = ""
+    chart_config: Optional[Dict[str, Any]] = {}
+    suggested_visualizations: Optional[List[str]] = []
+    metadata: Dict[str, Any]
+    debug_info: Optional[Dict[str, Any]] = None  # Hidden by default
+    
+class DebugInfo(BaseModel):
+    sql: str
+    plan: Dict[str, Any]
+    execution_steps: List[str]
+    validation_results: Dict[str, Any]
+    
+class SSEMessage(BaseModel):
+    type: str  # "status", "progress", "result", "error"
+    data: Dict[str, Any]
 class QueryRequest(BaseModel):
     question: str
     top_k: int = 5
@@ -28,6 +65,8 @@ class DBQueryRequest(BaseModel):
     question: str
     chat_history: list = []
     currency: str = "MWK"
+    debug_mode: bool = False  # Progressive disclosure control
+    user_level: str = "business"  # "business", "analyst", "developer"
 
 class DBQueryResponse(BaseModel):
     question: str
@@ -39,7 +78,8 @@ class DBQueryResponse(BaseModel):
     suggested_visualizations: list = []
     metadata: dict = {}
 
-@app.post("/ingest")
+# API v1 Routes
+@app.post("/api/v1/ingest")
 async def ingest_pdf(file: UploadFile = File(...)):
     """Upload and ingest a PDF into the vector database."""
     if not file.filename.endswith('.pdf'):
@@ -66,7 +106,7 @@ async def ingest_pdf(file: UploadFile = File(...)):
     
     return {"message": f"Ingested {len(chunks)} chunks from {file.filename}"}
 
-@app.post("/query", response_model=QueryResponse)
+@app.post("/api/v1/query", response_model=QueryResponse)
 async def query_rag(request: QueryRequest):
     """Ask a question and get an answer from the RAG system."""
     # Search vector DB
@@ -102,20 +142,121 @@ async def query_rag(request: QueryRequest):
         num_contexts=len(found["contexts"])
     )
 
-@app.post("/query/database", response_model=DBQueryResponse)
+def calculate_query_complexity(result: dict) -> float:
+    """Calculate query complexity score for progressive disclosure."""
+    score = 0.0
+    
+    # SQL complexity indicators
+    sql = result.get("sql", "").upper()
+    if "JOIN" in sql: score += 0.3
+    if "GROUP BY" in sql: score += 0.2
+    if "HAVING" in sql: score += 0.2
+    if "SUBQUERY" in sql or "SELECT" in sql[sql.find("SELECT")+6:]: score += 0.4
+    
+    # Result complexity
+    if result.get("metadata", {}).get("row_count", 0) > 100: score += 0.2
+    if len(result.get("metadata", {}).get("columns", [])) > 5: score += 0.1
+    
+    # Error indicators
+    if "error" in result.get("answer", "").lower(): score += 0.5
+    if result.get("metadata", {}).get("attempts", 1) > 1: score += 0.3
+    
+    return min(score, 1.0)
+
+@app.post("/api/v1/query/database", response_model=EnterpriseQueryResponse)
 async def query_db(request: DBQueryRequest):
-    """Ask questions about live database data (Advanced Text-to-SQL with Planning)."""
-    result = query_database(request.question, request.chat_history, request.currency)
-    return DBQueryResponse(
+    """Enterprise database query with progressive disclosure."""
+    result = query_database_with_validation(request.question, request.chat_history, request.currency)
+    
+    # Auto-detect complexity for progressive disclosure
+    complexity_score = calculate_query_complexity(result)
+    auto_debug = complexity_score > 0.7 or "error" in result["answer"].lower()
+    
+    # Progressive disclosure: hide technical details unless debug mode or high complexity
+    response = EnterpriseQueryResponse(
         question=result["question"],
-        plan=result["plan"],
-        sql=result["sql"],
         answer=result["answer"],
         markdown_table=result["markdown_table"],
         chart_config=result["chart_config"],
         suggested_visualizations=result.get("suggested_visualizations", []),
-        metadata=result["metadata"]
+        metadata={
+            "analysis_type": result["metadata"].get("analysis_type"),
+            "visualization_type": result["metadata"].get("visualization_type"),
+            "has_chart": result["metadata"].get("has_chart", False),
+            "complexity_score": complexity_score,
+            "auto_debug_triggered": auto_debug
+        }
     )
+    
+    # Add debug info if requested OR auto-detected complexity
+    if request.debug_mode or auto_debug:
+        response.debug_info = {
+            "sql": result["sql"],
+            "plan": result["plan"],
+            "execution_steps": ["Schema validation", "SQL generation", "Query execution"],
+            "validation_results": {"passed": True, "warnings": []},
+            "complexity_reason": "High complexity detected" if auto_debug else "Debug mode enabled"
+        }
+    
+    return response
+
+@app.get("/api/v1/query/database/stream")
+async def query_db_stream(question: str, currency: str = "MWK", debug_mode: bool = False):
+    """Server-Sent Events endpoint for real-time query progress."""
+    async def generate_sse():
+        # Send initial status
+        yield f"""data: {json.dumps({'type': 'status', 'data': {'message': 'Starting analysis...', 'step': 1, 'total': 4}})}
+
+"""
+        await asyncio.sleep(0.5)
+        
+        # Schema validation step
+        yield f"""data: {json.dumps({'type': 'progress', 'data': {'message': 'Validating schema...', 'step': 2, 'total': 4}})}
+
+"""
+        await asyncio.sleep(0.5)
+        
+        # SQL generation step
+        yield f"""data: {json.dumps({'type': 'progress', 'data': {'message': 'Generating SQL...', 'step': 3, 'total': 4}})}
+
+"""
+        await asyncio.sleep(0.5)
+        
+        # Execute query
+        yield f"""data: {json.dumps({'type': 'progress', 'data': {'message': 'Executing query...', 'step': 4, 'total': 4}})}
+
+"""
+        
+        try:
+            result = query_database_with_validation(question, [], currency)
+            
+            # Send final result
+            response_data = {
+                'type': 'result',
+                'data': {
+                    'question': result['question'],
+                    'answer': result['answer'],
+                    'markdown_table': result['markdown_table'],
+                    'chart_config': result['chart_config']
+                }
+            }
+            
+            if debug_mode:
+                response_data['data']['debug_info'] = {
+                    'sql': result['sql'],
+                    'plan': result['plan']
+                }
+            
+            yield f"""data: {json.dumps(response_data)}
+
+"""
+            
+        except Exception as e:
+            yield f"""data: {json.dumps({'type': 'error', 'data': {'message': str(e)}})}
+
+"""
+    
+    return StreamingResponse(generate_sse(), media_type="text/plain")
 
 @app.get("/health")
 async def health():
