@@ -1,0 +1,109 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: semantic-dict-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-app
+  labels:
+    app: rag-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: rag-app
+  template:
+    metadata:
+      labels:
+        app: rag-app
+    spec:
+      containers:
+      - name: rag-app
+        image: rag-app:latest
+        ports:
+        - containerPort: 8000
+        - containerPort: 8501
+        env:
+        - name: GROQ_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: rag-secrets
+              key: groq-api-key
+        - name: DB_HOST
+          value: "postgres-service"
+        - name: DB_NAME
+          value: "paymaart_test"
+        - name: DB_USER
+          value: "postgres"
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: rag-secrets
+              key: db-password
+        volumeMounts:
+        # Mount persistent volume for semantic dictionary
+        - name: semantic-data
+          mountPath: /app/data
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+      volumes:
+      - name: semantic-data
+        persistentVolumeClaim:
+          claimName: semantic-dict-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag-app-service
+spec:
+  selector:
+    app: rag-app
+  ports:
+    - name: api
+      protocol: TCP
+      port: 8000
+      targetPort: 8000
+    - name: ui
+      protocol: TCP
+      port: 8501
+      targetPort: 8501
+  type: LoadBalancer
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rag-secrets
+type: Opaque
+data:
+  # Base64 encoded values - replace with actual secrets from vault
+  groq-api-key: eW91cl9ncm9xX2FwaV9rZXlfaGVyZQ==  # echo -n "your_groq_api_key" | base64
+  db-password: eW91cl9kYl9wYXNzd29yZF9oZXJl      # echo -n "your_db_password" | base64

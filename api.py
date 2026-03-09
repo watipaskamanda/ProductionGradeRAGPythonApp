@@ -119,7 +119,18 @@ async def query_db(request: DBQueryRequest):
 
 @app.get("/health")
 async def health():
-    """Health check endpoint."""
+    """Enhanced health check with regression testing."""
+    from db_query import health_check
+    result = health_check()
+    
+    if result["status"] == "unhealthy":
+        raise HTTPException(status_code=503, detail=result)
+    
+    return result
+
+@app.get("/health/simple")
+async def simple_health():
+    """Simple health check for basic liveness probe."""
     return {"status": "healthy"}
 
 if __name__ == "__main__":

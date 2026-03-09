@@ -1,0 +1,28 @@
+{
+  "business_name": "Bella Salon & Spa",
+  "domain_context": "salon_management",
+  "domain_terms": {
+    "premium_service": "service_price::numeric > 100",
+    "regular_service": "service_price::numeric BETWEEN 30 AND 100",
+    "basic_service": "service_price::numeric < 30",
+    "recent_appointments": "appointment_date > NOW() - INTERVAL '30 days'",
+    "this_month": "EXTRACT(MONTH FROM appointment_date) = EXTRACT(MONTH FROM CURRENT_DATE)",
+    "last_month": "EXTRACT(MONTH FROM appointment_date) = EXTRACT(MONTH FROM CURRENT_DATE - INTERVAL '1 month')",
+    "hair_services": "service_type IN ('haircut', 'coloring', 'styling')",
+    "spa_services": "service_type IN ('massage', 'facial', 'manicure', 'pedicure')",
+    "beauty_services": "service_type IN ('makeup', 'eyebrow', 'eyelash')",
+    "completed_appointments": "status = 'completed'",
+    "cancelled_appointments": "status = 'cancelled'",
+    "no_show_appointments": "status = 'no_show'",
+    "vip_clients": "client_tier = 'vip'",
+    "regular_clients": "client_tier = 'regular'",
+    "peak_hours": "EXTRACT(HOUR FROM appointment_time) BETWEEN 10 AND 16",
+    "weekend_appointments": "EXTRACT(DOW FROM appointment_date) IN (0, 6)"
+  },
+  "business_language": {
+    "primary_entity": "appointments",
+    "currency": "USD",
+    "date_format": "datetime",
+    "key_metrics": ["service_price", "appointment_count", "client_satisfaction"]
+  }
+}

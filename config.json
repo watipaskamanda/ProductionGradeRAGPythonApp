@@ -1,0 +1,28 @@
+{
+  "business_name": "PayMaart Financial Services",
+  "domain_context": "financial_transactions",
+  "domain_terms": {
+    "high_value_transaction": "transaction_amount::numeric > 500000",
+    "medium_value_transaction": "transaction_amount::numeric BETWEEN 100000 AND 500000",
+    "low_value_transaction": "transaction_amount::numeric < 100000",
+    "recent_transactions": "created_at::bigint > EXTRACT(EPOCH FROM NOW() - INTERVAL '30 days')",
+    "this_month": "EXTRACT(MONTH FROM TO_TIMESTAMP(created_at::bigint)) = EXTRACT(MONTH FROM CURRENT_DATE)",
+    "last_month": "EXTRACT(MONTH FROM TO_TIMESTAMP(created_at::bigint)) = EXTRACT(MONTH FROM CURRENT_DATE - INTERVAL '1 month')",
+    "payment_transactions": "transaction_type IN ('pay_in', 'g2p_pay_in')",
+    "settlement_transactions": "transaction_type IN ('settlement', 'payout_approved')",
+    "float_transactions": "transaction_type IN ('float', 'excess_float')",
+    "flagged_transactions": "flagged = true",
+    "clean_transactions": "flagged = false",
+    "credit_transactions": "type = 'credit'",
+    "debit_transactions": "type = 'debit'",
+    "positive_balance": "closing_balance::numeric > 0",
+    "negative_balance": "closing_balance::numeric < 0",
+    "large_balance": "closing_balance::numeric > 1000000"
+  },
+  "business_language": {
+    "primary_entity": "transactions",
+    "currency": "MWK",
+    "date_format": "timestamp",
+    "key_metrics": ["transaction_amount", "closing_balance", "transaction_count"]
+  }
+}

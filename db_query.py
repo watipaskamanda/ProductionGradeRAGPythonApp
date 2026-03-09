@@ -1,18 +1,154 @@
 import psycopg2
 from groq import Groq
 import os
+import json
+from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
 
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
+# DOMAIN-AGNOSTIC CONFIGURATION
+CONFIG_FILE = Path("/app/config.json")
+if not CONFIG_FILE.exists():
+    CONFIG_FILE = Path("config.json")  # Fallback for development
+
+def load_domain_config():
+    """Load domain-specific configuration from config.json"""
+    try:
+        with open(CONFIG_FILE, 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"Failed to load config: {e}")
+        return {
+            "business_name": "Generic Business",
+            "domain_context": "data_analysis", 
+            "domain_terms": {},
+            "business_language": {"primary_entity": "records", "currency": "USD"}
+        }
+
+# Global domain configuration
+domain_config = load_domain_config()
+
+# UNIVERSAL SCHEMA DISCOVERY
+def get_universal_schema(connection_params=None):
+    """Dynamic schema discovery that works with any database"""
+    if connection_params is None:
+        connection_params = {
+            "host": os.getenv("DB_HOST", "localhost"),
+            "database": os.getenv("DB_NAME", "paymaart_test"),
+            "user": os.getenv("DB_USER", "postgres"),
+            "password": os.getenv("DB_PASSWORD", "testpass"),
+            "port": os.getenv("DB_PORT", "5432")
+        }
+    
+    try:
+        conn = psycopg2.connect(**connection_params)
+        cursor = conn.cursor()
+        
+        # Universal schema query for PostgreSQL
+        cursor.execute("""
+            SELECT 
+                t.table_name,
+                c.column_name,
+                c.data_type,
+                c.is_nullable,
+                tc.constraint_type,
+                ccu.table_name as foreign_table,
+                ccu.column_name as foreign_column
+            FROM information_schema.tables t
+            LEFT JOIN information_schema.columns c ON t.table_name = c.table_name
+            LEFT JOIN information_schema.key_column_usage kcu ON c.table_name = kcu.table_name 
+                AND c.column_name = kcu.column_name
+            LEFT JOIN information_schema.table_constraints tc ON kcu.constraint_name = tc.constraint_name
+            LEFT JOIN information_schema.constraint_column_usage ccu ON tc.constraint_name = ccu.constraint_name
+            WHERE t.table_schema = 'public' 
+                AND t.table_type = 'BASE TABLE'
+                AND c.table_schema = 'public'
+            ORDER BY t.table_name, c.ordinal_position
+        """)
+        
+        schema_data = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        # Build universal schema dictionary
+        tables = {}
+        for row in schema_data:
+            table_name, column_name, data_type, is_nullable, constraint_type, foreign_table, foreign_column = row
+            
+            if table_name not in tables:
+                tables[table_name] = []
+            
+            column_info = {
+                "name": column_name,
+                "type": data_type,
+                "nullable": is_nullable == "YES",
+                "is_primary_key": constraint_type == "PRIMARY KEY",
+                "is_foreign_key": constraint_type == "FOREIGN KEY",
+                "references": f"{foreign_table}.{foreign_column}" if foreign_table and foreign_column else None
+            }
+            
+            if column_info not in tables[table_name]:
+                tables[table_name].append(column_info)
+        
+        return {
+            "success": True,
+            "tables": tables,
+            "business_context": domain_config["business_name"],
+            "domain": domain_config["domain_context"]
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": str(e), "tables": {}}
+
+def generate_universal_system_prompt(schema_result):
+    """Generate domain-aware system prompt from discovered schema"""
+    if not schema_result["success"]:
+        return f"Schema Error: {schema_result['error']}"
+    
+    business_name = domain_config["business_name"]
+    domain_context = domain_config["domain_context"]
+    primary_entity = domain_config["business_language"]["primary_entity"]
+    
+    prompt = f"{business_name} - {domain_context.upper()} DATABASE SCHEMA:\n\n"
+    
+    for table_name, columns in schema_result["tables"].items():
+        prompt += f"Table: {table_name}\n"
+        
+        for col in columns:
+            pk_marker = " [PRIMARY KEY]" if col["is_primary_key"] else ""
+            fk_marker = f" [FOREIGN KEY → {col['references']}]" if col["is_foreign_key"] and col["references"] else ""
+            nullable_marker = " (nullable)" if col["nullable"] else " (required)"
+            prompt += f"  * {col['name']} ({col['type']}){pk_marker}{fk_marker}{nullable_marker}\n"
+        
+        prompt += "\n"
+    
+    # Add domain-specific context
+    prompt += f"""
+BUSINESS CONTEXT:
+- Domain: {domain_context}
+- Primary Entity: {primary_entity}
+- Business: {business_name}
+
+IMPORTANT NOTES:
+- Use proper data type casting for numeric operations
+- Handle timestamp conversions appropriately  
+- Always use table and column names exactly as shown above
+- Primary keys are unique identifiers for each table
+- Foreign keys show relationships: use JOINs when querying related data
+- Speak in the language of {domain_context} when explaining results
+"""
+    
+    return prompt
+
 # 1. SCHEMA CACHING
 _cached_schema = None
 _cached_semantic_mapping = None
 
 def get_live_system_prompt():
-    """Get cached schema or refresh if needed."""
+    """Get cached universal schema or refresh if needed."""
     global _cached_schema
     if _cached_schema is None:
         _cached_schema = inject_autonomous_schema_into_workflow()
@@ -55,30 +191,44 @@ IMPORTANT SQL Notes:
 
 # 1. DYNAMIC HALLUCINATION GUARD
 def get_dynamic_metadata():
-    """Fetches real bounds of the data to keep the LLM grounded."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    """Fetches real bounds of the data to keep the LLM grounded - works with any schema."""
     try:
-        cursor.execute("""
-            SELECT 
-                MIN(TO_TIMESTAMP(created_at::bigint)), 
-                MAX(TO_TIMESTAMP(created_at::bigint)),
-                ARRAY_AGG(DISTINCT transaction_type),
-                ARRAY_AGG(DISTINCT type)
-            FROM trust_bank_transaction
-        """)
-        min_date, max_date, t_types, types = cursor.fetchone()
-        return f"""
-        REAL-TIME DATA CONSTRAINTS:
-        - Data Range: {min_date} to {max_date}
-        - Valid transaction_type values: {t_types}
-        - Valid type values: {types}
-        """
-    except:
-        return ""
-    finally:
+        schema_result = get_universal_schema()
+        if not schema_result["success"] or not schema_result["tables"]:
+            return "No dynamic metadata available"
+        
+        # Find the first table with a timestamp-like column
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        for table_name, columns in schema_result["tables"].items():
+            timestamp_cols = [col["name"] for col in columns if "timestamp" in col["type"] or "date" in col["name"] or "created" in col["name"]]
+            if timestamp_cols:
+                timestamp_col = timestamp_cols[0]
+                
+                # Try to get data bounds
+                try:
+                    cursor.execute(f"SELECT MIN({timestamp_col}), MAX({timestamp_col}), COUNT(*) FROM {table_name} LIMIT 1")
+                    min_val, max_val, count = cursor.fetchone()
+                    cursor.close()
+                    conn.close()
+                    
+                    return f"""
+REAL-TIME DATA CONSTRAINTS:
+- Table: {table_name}
+- Data Range: {min_val} to {max_val}
+- Total Records: {count:,}
+- Business Context: {domain_config['business_name']} - {domain_config['domain_context']}
+"""
+                except:
+                    continue
+        
         cursor.close()
         conn.close()
+        return "Dynamic metadata unavailable"
+        
+    except Exception as e:
+        return f"Metadata error: {str(e)}"
 
 # 2. STATEFUL ANALYST (SESSION MEMORY)
 class AnalystSession:
@@ -770,17 +920,17 @@ Return ONLY the corrected SQL query:"""
     return sql
 
 def inject_autonomous_schema_into_workflow():
-    """5. INTEGRATION: Replace static DB_SCHEMA with cached autonomous reflection"""
-    global _cached_schema, _cached_semantic_mapping
+    """Universal schema injection that works with any domain"""
+    global _cached_schema
     
     if _cached_schema is None:
-        schema_result = get_autonomous_schema()
+        schema_result = get_universal_schema()
         
         if schema_result["success"]:
-            _cached_schema = schema_result["system_prompt"]
-            _cached_semantic_mapping = schema_result["semantic_mapping"]
+            _cached_schema = generate_universal_system_prompt(schema_result)
         else:
-            _cached_schema = DB_SCHEMA + f"\n\n[WARNING: Using static schema - {schema_result['error']}]"
+            # Fallback to basic schema
+            _cached_schema = f"Schema discovery failed: {schema_result['error']}"
     
     return _cached_schema
 
@@ -980,38 +1130,21 @@ def test_schema_reflection():
         print(f"❌ Schema reflection failed: {result['error']}")
     
     return result
-# SEMANTIC LAYER
-class SemanticDictionary:
-    """Stores and manages business term definitions for SQL generation."""
+# DOMAIN-AGNOSTIC SEMANTIC LAYER
+class UniversalSemanticDictionary:
+    """Domain-agnostic semantic dictionary that loads from config.json"""
     
-    def __init__(self):
-        self.definitions = {
-            # Transaction Value Categories
-            'high_value_transaction': 'transaction_amount::numeric > 500000',
-            'medium_value_transaction': 'transaction_amount::numeric BETWEEN 100000 AND 500000',
-            'low_value_transaction': 'transaction_amount::numeric < 100000',
-            
-            # Time-based Definitions
-            'recent_transactions': 'created_at::bigint > EXTRACT(EPOCH FROM NOW() - INTERVAL \'30 days\')',
-            'this_month': 'EXTRACT(MONTH FROM TO_TIMESTAMP(created_at::bigint)) = EXTRACT(MONTH FROM CURRENT_DATE)',
-            'last_month': 'EXTRACT(MONTH FROM TO_TIMESTAMP(created_at::bigint)) = EXTRACT(MONTH FROM CURRENT_DATE - INTERVAL \'1 month\')',
-            
-            # Transaction Type Groups
-            'payment_transactions': 'transaction_type IN (\'pay_in\', \'g2p_pay_in\')',
-            'settlement_transactions': 'transaction_type IN (\'settlement\', \'payout_approved\')',
-            'float_transactions': 'transaction_type IN (\'float\', \'excess_float\')',
-            
-            # Status Definitions
-            'flagged_transactions': 'flagged = true',
-            'clean_transactions': 'flagged = false',
-            'credit_transactions': 'type = \'credit\'',
-            'debit_transactions': 'type = \'debit\'',
-            
-            # Balance Categories
-            'positive_balance': 'closing_balance::numeric > 0',
-            'negative_balance': 'closing_balance::numeric < 0',
-            'large_balance': 'closing_balance::numeric > 1000000'
-        }
+    def __init__(self, config=None):
+        self.config = config or domain_config
+        self.definitions = self.config.get("domain_terms", {})
+        
+        # Add universal terms that work across domains
+        self.definitions.update({
+            "recent": "created_at > NOW() - INTERVAL '30 days'",
+            "today": "DATE(created_at) = CURRENT_DATE",
+            "this_week": "created_at >= DATE_TRUNC('week', CURRENT_DATE)",
+            "this_year": "EXTRACT(YEAR FROM created_at) = EXTRACT(YEAR FROM CURRENT_DATE)"
+        })
     
     def get_sql_definition(self, term: str) -> str:
         """Get SQL fragment for a business term."""
@@ -1029,25 +1162,107 @@ class SemanticDictionary:
         """Replace business terms in text with their SQL definitions."""
         result = text
         for term, definition in self.definitions.items():
-            # Replace whole words only (case insensitive)
             import re
             pattern = r'\b' + re.escape(term) + r'\b'
             result = re.sub(pattern, definition, result, flags=re.IGNORECASE)
         return result
     
     def get_semantic_context(self) -> str:
-        """Generate context string for LLM prompts."""
-        context = "\nBUSINESS TERMS AVAILABLE:\n"
+        """Generate domain-aware context string for LLM prompts."""
+        business_name = self.config["business_name"]
+        domain_context = self.config["domain_context"]
+        
+        context = f"\n{business_name.upper()} BUSINESS TERMS:\n"
         for term, definition in self.definitions.items():
             context += f"- {term}: {definition}\n"
-        context += "\nUse these business terms when appropriate in your analysis.\n"
+        context += f"\nUse these {domain_context} terms when appropriate in your analysis.\n"
         return context
 
-# Global semantic dictionary instance
-semantic_dict = SemanticDictionary()
+# UNIVERSAL PIPELINE
+def validate_config_against_schema():
+    """Validate config.json terms against actual database schema"""
+    try:
+        schema_result = get_universal_schema()
+        if not schema_result["success"]:
+            return {"valid": False, "error": "Schema discovery failed"}
+        
+        # Get all column names from all tables
+        all_columns = set()
+        for table_name, columns in schema_result["tables"].items():
+            for col in columns:
+                all_columns.add(col["name"])
+        
+        # Check config terms reference valid columns
+        invalid_terms = []
+        for term, sql_fragment in domain_config["domain_terms"].items():
+            # Simple check for column references
+            for col in all_columns:
+                if col in sql_fragment:
+                    break
+            else:
+                # No valid column found in this term
+                invalid_terms.append({"term": term, "sql": sql_fragment})
+        
+        if invalid_terms:
+            logger.warning(f"Config validation warnings: {len(invalid_terms)} terms may reference invalid columns")
+            return {"valid": True, "warnings": invalid_terms}
+        
+        logger.info("✅ Config validation passed: All terms reference valid columns")
+        return {"valid": True, "warnings": []}
+        
+    except Exception as e:
+        return {"valid": False, "error": str(e)}
 
-# Global session instance
+def initialize_universal_agent():
+    """Initialize the domain-agnostic SQL agent"""
+    global semantic_dict, _cached_schema
+    
+    # Load domain configuration
+    config = load_domain_config()
+    
+    # Initialize semantic dictionary with domain terms
+    semantic_dict = UniversalSemanticDictionary(config)
+    
+    # Discover schema
+    schema_result = get_universal_schema()
+    if schema_result["success"]:
+        _cached_schema = generate_universal_system_prompt(schema_result)
+        logger.info(f"Initialized {config['business_name']} agent with {len(schema_result['tables'])} tables")
+    else:
+        logger.error(f"Schema discovery failed: {schema_result['error']}")
+        _cached_schema = "Schema discovery failed"
+    
+    # Validate config against schema
+    validation = validate_config_against_schema()
+    if not validation["valid"]:
+        logger.error(f"Config validation failed: {validation['error']}")
+    elif validation["warnings"]:
+        logger.warning(f"Config has {len(validation['warnings'])} potential issues")
+    
+    return {
+        "business_name": config["business_name"],
+        "domain": config["domain_context"],
+        "tables_discovered": len(schema_result.get("tables", {})),
+        "domain_terms_loaded": len(semantic_dict.get_all_terms()),
+        "config_validation": validation
+    }
+
+# Global instances - initialized by universal agent
+semantic_dict = None
 session = AnalystSession()
+
+# Initialize on module load
+def _initialize_module():
+    global semantic_dict
+    try:
+        init_result = initialize_universal_agent()
+        logger.info(f"Universal SQL Agent initialized: {init_result}")
+    except Exception as e:
+        logger.error(f"Failed to initialize universal agent: {e}")
+        # Fallback to basic semantic dictionary
+        semantic_dict = UniversalSemanticDictionary()
+
+_initialize_module()
 
 # 3. LOGIC-DRIVEN VISUALIZATION
 def get_best_viz(plan, results):
@@ -1352,3 +1567,482 @@ def test_semantic_layer():
             print(f"SQL Generation Error: {e}")
     
     return True
+
+def query_database_with_validation(question: str, chat_history: list = None, currency: str = "MWK") -> dict:
+    """Complete SQL-Agent with conversational intent, validation, and visualization."""
+    question_lower = question.lower().strip()
+    
+    # STEP 1: Check conversational intent first
+    if is_conversational_intent(question, chat_history):
+        chat_context = get_chat_context(chat_history) if chat_history else ""
+        
+        if any(word in question_lower for word in ['hi', 'hello', 'hey']):
+            base_greeting = "Hi! I'm your transaction data analyst. I can help you explore your financial data."
+        elif any(word in question_lower for word in ['thanks', 'thank you']):
+            base_greeting = "You're welcome! I'm here for transaction insights."
+        else:
+            base_greeting = "I can analyze your transaction database."
+        
+        answer = f"{base_greeting} Try asking: 'How many transactions last month?' or 'Show high value transactions'"
+        if chat_context:
+            answer += "\n\n*I remember our previous conversation.*"
+        
+        return {
+            "question": question,
+            "plan": {"analysis_type": "conversational"},
+            "sql": "-- No SQL needed",
+            "answer": answer,
+            "markdown_table": "",
+            "chart_config": {},
+            "suggested_visualizations": [],
+            "metadata": {"conversational": True}
+        }
+    
+    # STEP 2: Check for session reuse (these/those/that)
+    if any(word in question_lower for word in ['these', 'those', 'that', 'them']) and session.last_results:
+        if any(word in question_lower for word in ['chart', 'graph', 'visualize', 'plot']):
+            best_viz = get_best_viz(session.last_plan, session.last_results)
+            
+            chart_config = {}
+            if best_viz in ["pie_chart", "bar_chart", "line_chart"] and len(session.last_results.get("columns", [])) == 2:
+                chart_data = {}
+                for row in session.last_results["rows"]:
+                    key = str(row[0]) if row[0] is not None else "Unknown"
+                    try:
+                        value = float(row[1]) if row[1] is not None else 0
+                        chart_data[key] = value
+                    except:
+                        chart_data[key] = 1
+                
+                chart_config = {
+                    "type": best_viz,
+                    "data": chart_data,
+                    "title": f"Visualization of {session.last_question}",
+                    "x_label": session.last_results["columns"][0],
+                    "y_label": session.last_results["columns"][1]
+                }
+            
+            return {
+                "question": question,
+                "plan": {"analysis_type": "visualization", "explanation": f"Visualizing: {session.last_question}"},
+                "sql": f"-- Reusing: {session.last_question}",
+                "answer": f"**Analysis**: Visualizing: {session.last_question}\n\nSee the {best_viz.replace('_', ' ')} below.",
+                "markdown_table": create_markdown_table(session.last_results, currency),
+                "chart_config": chart_config,
+                "suggested_visualizations": get_visualization_options(session.last_results),
+                "metadata": {"reused_session": True, "visualization_type": best_viz}
+            }
+    
+    # STEP 3: Build context from chat history
+    context = get_chat_context(chat_history)
+    if chat_history:
+        for msg in chat_history[-3:]:
+            if msg.get("role") == "assistant" and "sql" in msg:
+                context += f"\nPrevious query: {msg.get('question', '')} → {msg.get('sql', '')}"
+    
+    # STEP 4: Check if database-related
+    db_keywords = ['transaction', 'amount', 'count', 'total', 'sum', 'show', 'list', 'how many', 'what is', 'find', 'search', 'visualize', 'chart', 'graph', 'pie', 'bar']
+    if not any(keyword in question_lower for keyword in db_keywords):
+        return {
+            "question": question,
+            "plan": {"analysis_type": "not_db_question"},
+            "sql": "-- Not a database question",
+            "answer": "I can only answer questions about your transaction database. Try asking about transactions, amounts, counts, or totals.",
+            "markdown_table": "",
+            "chart_config": {},
+            "suggested_visualizations": [],
+            "metadata": {"not_db_question": True}
+        }
+    
+    # STEP 5: Create Analysis Plan with Semantic Layer
+    enhanced_question = semantic_dict.replace_terms_in_text(question)
+    plan = create_analysis_plan_with_metadata(enhanced_question, context)
+    
+    # STEP 6: Generate SQL with Semantic Layer and Validation
+    enhanced_question = semantic_dict.replace_terms_in_text(question)
+    semantic_context = semantic_dict.get_semantic_context()
+    sql = text_to_sql_with_validation(question, context)
+    
+    # STEP 7: Execute Query
+    results = execute_query_with_retry(sql, max_retries=1)
+    
+    # STEP 8: Update Session Memory
+    session.update(question, results, plan)
+    
+    # STEP 9: Override Visualization with Logic-Driven Decision
+    if "visualization" in plan:
+        plan["visualization"] = get_best_viz(plan, results)
+    
+    # STEP 10: Get Visualization Options
+    suggested_visualizations = get_visualization_options(results)
+    
+    # STEP 11: Format Answer with Currency
+    answer = format_advanced_answer(question, results, plan, currency, suggested_visualizations)
+    
+    # STEP 12: Create Markdown Table
+    markdown_table = create_markdown_table(results, currency)
+    
+    # STEP 13: Create Chart Config
+    chart_config = {}
+    best_viz = get_best_viz(plan, results)
+    if best_viz in ["pie_chart", "bar_chart", "line_chart"] and len(results.get("columns", [])) == 2:
+        chart_data = {}
+        for row in results.get("rows", []):
+            if len(row) >= 2:
+                key = str(row[0]) if row[0] is not None else "Unknown"
+                try:
+                    value = float(row[1]) if row[1] is not None else 0
+                    chart_data[key] = value
+                except:
+                    chart_data[key] = 1
+        
+        if chart_data:
+            chart_config = {
+                "type": best_viz,
+                "data": chart_data,
+                "title": plan.get("explanation", "Data Analysis"),
+                "x_label": results["columns"][0],
+                "y_label": results["columns"][1],
+                "auto_detected": True
+            }
+    
+    # STEP 14: Store Metadata
+    metadata = {
+        "question": question,
+        "sql": results.get("sql_used", sql),
+        "plan": plan,
+        "row_count": len(results.get("rows", [])),
+        "columns": results.get("columns", []),
+        "analysis_type": plan.get("analysis_type", "unknown"),
+        "visualization_type": best_viz,
+        "has_chart": bool(chart_config),
+        "validation_used": True,
+        "suggested_visualizations": suggested_visualizations
+    }
+    
+    return {
+        "question": question,
+        "plan": plan,
+        "sql": results.get("sql_used", sql),
+        "answer": answer,
+        "markdown_table": markdown_table,
+        "chart_config": chart_config,
+        "suggested_visualizations": suggested_visualizations,
+        "metadata": metadata
+    }
+
+# SELF-IMPROVING FEEDBACK LOOP
+def audit_failed_query(question: str, failed_sql: str, error_msg: str) -> dict:
+    """Analyze why a query failed and suggest a fix for the semantic dictionary."""
+    prompt = f"""You are a Database Auditor. Analyze this failed SQL query and suggest a mapping fix.
+
+SCHEMA: {DB_SCHEMA}
+QUESTION: {question}
+FAILED SQL: {failed_sql}
+ERROR: {error_msg}
+
+Task: Identify which term in the user's question was misunderstood and map it to the correct column/table.
+Return ONLY valid JSON:
+{{
+    "identified_term": "the word the user used",
+    "correct_column": "the actual column or expression needed",
+    "reasoning": "brief explanation"
+}}"""
+    
+    response = groq_client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "system", "content": "You are a database auditor."},
+                  {"role": "user", "content": prompt}],
+        temperature=0
+    )
+    
+    try:
+        import json
+        return json.loads(response.choices[0].message.content.strip())
+    except:
+        return {"identified_term": "", "correct_column": "", "reasoning": "Failed to parse auditor response"}
+
+def process_user_feedback(question: str, sql: str, rating: int, comment: str = ""):
+    """Log feedback and trigger auditor if rating is poor."""
+    # Log feedback (in production, save to database)
+    print(f"Feedback logged: Q='{question}' Rating={rating} Comment='{comment}'")
+    
+    # If rating is low (1 or 2), run the Auditor
+    if rating <= 2:
+        print(f"Triggering auditor for: {question}")
+        suggestion = audit_failed_query(question, sql, comment)
+        print(f"Auditor Suggestion: {suggestion}")
+        
+        # Auto-apply the suggestion if it looks valid
+        if suggestion.get("identified_term") and suggestion.get("correct_column"):
+            term = suggestion["identified_term"].lower().replace(" ", "_")
+            mapping = suggestion["correct_column"]
+            
+            # Add to semantic dictionary
+            result = add_business_term(term, mapping)
+            print(f"Auto-added term: {result}")
+            
+        return suggestion
+    return None
+
+def get_feedback_stats():
+    """Get feedback statistics for monitoring agent performance."""
+    # In production, query actual feedback database
+    return {
+        "total_queries": session.last_question if session.last_question else 0,
+        "avg_rating": 4.2,  # Placeholder
+        "improvement_suggestions": len(semantic_dict.get_all_terms()),
+        "auto_learned_terms": "Recent additions to semantic dictionary"
+    }
+# REGRESSION SAFETY GATE
+def run_regression_suite():
+    """Validates agent performance against a 'Golden Set' of queries."""
+    golden_set = [
+        {"q": "How many transactions", "expected_keywords": ["COUNT", "trust_bank_transaction"]},
+        {"q": "Total transaction amount", "expected_keywords": ["SUM", "transaction_amount"]},
+        {"q": "Show credit transactions", "expected_keywords": ["type", "credit"]},
+        {"q": "Recent transactions", "expected_keywords": ["created_at", "INTERVAL"]},
+        {"q": "High value transactions", "expected_keywords": ["transaction_amount", "500000"]}
+    ]
+    
+    results = []
+    for test in golden_set:
+        try:
+            sql = text_to_sql_with_validation(test["q"])
+            passed = all(keyword.lower() in sql.lower() for keyword in test["expected_keywords"])
+            results.append({"query": test["q"], "passed": passed, "sql": sql})
+        except Exception as e:
+            results.append({"query": test["q"], "passed": False, "error": str(e)})
+    
+    return results
+
+def add_business_term_with_safety_gate(term: str, mapping: str):
+    """Adds a term only if it passes the regression suite."""
+    # Store old state
+    old_definitions = semantic_dict.definitions.copy()
+    
+    # Apply new mapping
+    semantic_dict.add_definition(term, mapping)
+    
+    # Run regression suite
+    regression_results = run_regression_suite()
+    passed_tests = [r for r in regression_results if r["passed"]]
+    failed_tests = [r for r in regression_results if not r["passed"]]
+    
+    if len(failed_tests) == 0:
+        print(f"✅ Safety Gate Passed: '{term}' added successfully.")
+        print(f"   All {len(passed_tests)} regression tests passed.")
+        return {"success": True, "term": term, "mapping": mapping}
+    else:
+        print(f"❌ Safety Gate Failed: Rollback initiated.")
+        print(f"   {len(failed_tests)} tests failed: {[t['query'] for t in failed_tests]}")
+        
+        # Rollback to old state
+        semantic_dict.definitions = old_definitions
+        
+        return {
+            "success": False, 
+            "term": term, 
+            "failed_tests": failed_tests,
+            "message": "Term rejected to prevent regression"
+        }
+
+def safe_process_user_feedback(question: str, sql: str, rating: int, comment: str = ""):
+    """Enhanced feedback processing with regression protection."""
+    print(f"Feedback logged: Q='{question}' Rating={rating} Comment='{comment}'")
+    
+    if rating <= 2:
+        print(f"Triggering auditor for: {question}")
+        suggestion = audit_failed_query(question, sql, comment)
+        print(f"Auditor Suggestion: {suggestion}")
+        
+        if suggestion.get("identified_term") and suggestion.get("correct_column"):
+            term = suggestion["identified_term"].lower().replace(" ", "_")
+            mapping = suggestion["correct_column"]
+            
+            # Use safety gate instead of direct addition
+            result = add_business_term_with_safety_gate(term, mapping)
+            print(f"Safety Gate Result: {result}")
+            
+            return result
+    return None
+# PRODUCTION READINESS
+import logging
+import threading
+from contextlib import contextmanager
+
+# Configure logging for container environments
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]  # Logs to stdout for container orchestrators
+)
+logger = logging.getLogger(__name__)
+
+# Thread-safe semantic dictionary updates
+_semantic_lock = threading.Lock()
+
+@contextmanager
+def semantic_dict_lock():
+    """Thread-safe context manager for semantic dictionary updates."""
+    with _semantic_lock:
+        yield
+
+def thread_safe_add_business_term(term: str, mapping: str):
+    """Thread-safe version of add_business_term_with_safety_gate."""
+    with semantic_dict_lock():
+        logger.info(f"Attempting to add business term: {term} -> {mapping}")
+        
+        # Store old state
+        old_definitions = semantic_dict.definitions.copy()
+        
+        # Apply new mapping
+        semantic_dict.add_definition(term, mapping)
+        
+        # Run regression suite
+        regression_results = run_regression_suite()
+        passed_tests = [r for r in regression_results if r["passed"]]
+        failed_tests = [r for r in regression_results if not r["passed"]]
+        
+        if len(failed_tests) == 0:
+            logger.info(f"✅ Safety Gate Passed: '{term}' added successfully. All {len(passed_tests)} tests passed.")
+            return {"success": True, "term": term, "mapping": mapping}
+        else:
+            logger.warning(f"❌ Safety Gate Failed: Rollback initiated. {len(failed_tests)} tests failed.")
+            
+            # Rollback to old state
+            semantic_dict.definitions = old_definitions
+            
+            return {
+                "success": False, 
+                "term": term, 
+                "failed_tests": failed_tests,
+                "message": "Term rejected to prevent regression"
+            }
+
+def production_process_feedback(question: str, sql: str, rating: int, comment: str = ""):
+    """Production-ready feedback processing with proper logging."""
+    logger.info(f"Feedback received: Q='{question}' Rating={rating} Comment='{comment}'")
+    
+    if rating <= 2:
+        logger.info(f"Low rating detected. Triggering auditor for: {question}")
+        
+        try:
+            suggestion = audit_failed_query(question, sql, comment)
+            logger.info(f"Auditor suggestion: {suggestion}")
+            
+            if suggestion.get("identified_term") and suggestion.get("correct_column"):
+                term = suggestion["identified_term"].lower().replace(" ", "_")
+                mapping = suggestion["correct_column"]
+                
+                # Use thread-safe version
+                result = thread_safe_add_business_term(term, mapping)
+                logger.info(f"Safety gate result: {result}")
+                
+                return result
+        except Exception as e:
+            logger.error(f"Error processing feedback: {str(e)}")
+            return {"success": False, "error": str(e)}
+    
+    return None
+
+def health_check():
+    """Health check function for container readiness probes."""
+    try:
+        # Test database connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        cursor.close()
+        conn.close()
+        
+        # Run regression suite
+        regression_results = run_regression_suite()
+        failed_tests = [r for r in regression_results if not r["passed"]]
+        
+        if len(failed_tests) > 0:
+            logger.error(f"Health check failed: {len(failed_tests)} regression tests failed")
+            return {
+                "status": "unhealthy",
+                "reason": "regression_tests_failed",
+                "failed_tests": [t["query"] for t in failed_tests]
+            }
+        
+        logger.info("Health check passed: All systems operational")
+        return {
+            "status": "healthy",
+            "regression_tests_passed": len(regression_results),
+            "semantic_terms_loaded": len(semantic_dict.get_all_terms())
+        }
+        
+    except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
+        return {
+            "status": "unhealthy",
+            "reason": "database_connection_failed",
+            "error": str(e)
+        }
+# GRACEFUL SHUTDOWN HANDLER
+import signal
+import json
+import atexit
+from pathlib import Path
+
+# Persistence configuration
+SEMANTIC_DICT_FILE = Path("/app/data/semantic_dict.json")
+
+def save_semantic_dict():
+    """Persist semantic dictionary to disk."""
+    try:
+        SEMANTIC_DICT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        
+        with semantic_dict_lock():
+            with open(SEMANTIC_DICT_FILE, 'w') as f:
+                json.dump(semantic_dict.definitions, f, indent=2)
+        
+        logger.info(f"Semantic dictionary saved to {SEMANTIC_DICT_FILE}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to save semantic dictionary: {str(e)}")
+        return False
+
+def load_semantic_dict():
+    """Load semantic dictionary from disk on startup."""
+    try:
+        if SEMANTIC_DICT_FILE.exists():
+            with open(SEMANTIC_DICT_FILE, 'r') as f:
+                definitions = json.load(f)
+            
+            with semantic_dict_lock():
+                semantic_dict.definitions.update(definitions)
+            
+            logger.info(f"Loaded {len(definitions)} semantic terms from {SEMANTIC_DICT_FILE}")
+            return True
+    except Exception as e:
+        logger.error(f"Failed to load semantic dictionary: {str(e)}")
+    
+    return False
+
+def graceful_shutdown(signum, frame):
+    """Handle SIGTERM/SIGINT for graceful container shutdown."""
+    logger.info(f"Received signal {signum}. Initiating graceful shutdown...")
+    
+    # Save semantic dictionary
+    if save_semantic_dict():
+        logger.info("✅ Semantic dictionary persisted successfully")
+    else:
+        logger.error("❌ Failed to persist semantic dictionary")
+    
+    # Exit gracefully
+    logger.info("Shutdown complete")
+    exit(0)
+
+# Register signal handlers
+signal.signal(signal.SIGTERM, graceful_shutdown)
+signal.signal(signal.SIGINT, graceful_shutdown)
+
+# Register atexit handler as backup
+atexit.register(save_semantic_dict)
+
+# Load semantic dictionary on module import
+load_semantic_dict()
