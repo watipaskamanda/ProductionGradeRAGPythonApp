@@ -1046,6 +1046,26 @@ class SemanticDictionary:
 # Global semantic dictionary instance
 semantic_dict = SemanticDictionary()
 
+# Global session instance
+session = AnalystSession()
+
+# 3. LOGIC-DRIVEN VISUALIZATION
+def get_best_viz(plan, results):
+    """Overrides the LLM plan if the data structure suggests a better visual."""
+    if "error" in results or not results.get("rows"):
+        return "table"
+        
+    cols = results["columns"]
+    row_count = len(results["rows"])
+    
+    if any("month" in c or "year" in c or "date" in c for c in cols):
+        return "line_chart"
+    if row_count <= 5 and len(cols) == 2:
+        return "pie_chart"
+    if row_count > 5 and len(cols) == 2:
+        return "bar_chart"
+    return "table"
+
 def create_analysis_plan_with_semantic_layer(question: str, context: str = "") -> dict:
     """Enhanced analysis plan creation with semantic layer integration."""
     dynamic_metadata = get_dynamic_metadata()
