@@ -17,7 +17,16 @@
     "debit_transactions": "type = 'debit'",
     "positive_balance": "closing_balance::numeric > 0",
     "negative_balance": "closing_balance::numeric < 0",
-    "large_balance": "closing_balance::numeric > 1000000"
+    "large_balance": "closing_balance::numeric > 1000000",
+    "biggest_client": "sender_id GROUP BY sender_id ORDER BY SUM(transaction_amount::numeric) DESC LIMIT 1",
+    "top_client": "sender_id GROUP BY sender_id ORDER BY SUM(transaction_amount::numeric) DESC LIMIT 1",
+    "largest_client": "sender_id GROUP BY sender_id ORDER BY SUM(transaction_amount::numeric) DESC LIMIT 1",
+    "most_active_client": "sender_id GROUP BY sender_id ORDER BY COUNT(*) DESC LIMIT 1",
+    "top_sender": "sender_id GROUP BY sender_id ORDER BY SUM(transaction_amount::numeric) DESC LIMIT 5",
+    "biggest_receiver": "reciever_id GROUP BY reciever_id ORDER BY SUM(transaction_amount::numeric) DESC LIMIT 1",
+    "total_revenue": "SUM(transaction_amount::numeric)",
+    "average_transaction": "AVG(transaction_amount::numeric)",
+    "transaction_count": "COUNT(*)"
   },
   "business_language": {
     "primary_entity": "transactions",

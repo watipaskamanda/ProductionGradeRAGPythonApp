@@ -6,7 +6,7 @@ import pandas as pd
 
 load_dotenv()
 
-st.set_page_config(page_title="PayMaart AI Assistant", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="BIZINEZI AI Assistant", page_icon="🤖", layout="wide")
 
 API_URL = "http://localhost:8000"
 

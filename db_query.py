@@ -15,18 +15,130 @@ if not CONFIG_FILE.exists():
     CONFIG_FILE = Path("config.json")  # Fallback for development
 
 def load_domain_config():
-    """Load domain-specific configuration from config.json"""
+    """Load domain-specific configuration from config.json with semantic validation"""
     try:
         with open(CONFIG_FILE, 'r') as f:
-            return json.load(f)
+            config = json.load(f)
+        
+        # Validate semantic mappings against schema
+        validated_terms = validate_semantic_mappings(config.get("domain_terms", {}))
+        config["domain_terms"] = validated_terms
+        
+        return config
     except Exception as e:
-        logger.error(f"Failed to load config: {e}")
+        print(f"Failed to load config: {e}")
         return {
             "business_name": "Generic Business",
             "domain_context": "data_analysis", 
             "domain_terms": {},
             "business_language": {"primary_entity": "records", "currency": "USD"}
         }
+
+def discover_join_opportunities(schema_result):
+    """Build join mapping for automatic relationship discovery"""
+    if not schema_result["success"]:
+        return {}
+    
+    join_map = {}
+    for table_name, columns in schema_result["tables"].items():
+        for col in columns:
+            col_name = col["name"]
+            
+            # Map column to its table
+            if col_name not in join_map:
+                join_map[col_name] = []
+            join_map[col_name].append({
+                "table": table_name,
+                "is_pk": col["is_primary_key"],
+                "is_fk": col["is_foreign_key"],
+                "references": col["references"]
+            })
+    
+    return join_map
+
+def suggest_join_for_missing_column(missing_column: str, base_table: str = "trust_bank_transaction") -> str:
+    """Suggest JOIN clause when column is missing from base table"""
+    try:
+        schema_result = get_universal_schema()
+        join_map = discover_join_opportunities(schema_result)
+        
+        if missing_column not in join_map:
+            return ""
+        
+        # Find table containing the missing column
+        for table_info in join_map[missing_column]:
+            target_table = table_info["table"]
+            if target_table == base_table:
+                continue
+            
+            # Look for common join keys (id fields)
+            common_keys = []
+            base_columns = [col["name"] for col in schema_result["tables"][base_table]]
+            target_columns = [col["name"] for col in schema_result["tables"][target_table]]
+            
+            # Check for foreign key relationships or common ID patterns
+            for base_col in base_columns:
+                if base_col.endswith("_id") and base_col in target_columns:
+                    common_keys.append(base_col)
+                elif base_col == "id" and f"{base_table}_id" in target_columns:
+                    common_keys.append(("id", f"{base_table}_id"))
+            
+            if common_keys:
+                join_key = common_keys[0]
+                if isinstance(join_key, tuple):
+                    return f"JOIN {target_table} ON {base_table}.{join_key[0]} = {target_table}.{join_key[1]}"
+                else:
+                    return f"JOIN {target_table} ON {base_table}.{join_key} = {target_table}.{join_key}"
+        
+        return ""
+    except Exception as e:
+        print(f"Join discovery error: {e}")
+        return ""
+def validate_semantic_mappings(domain_terms: dict) -> dict:
+    """Validate semantic mappings with automatic join suggestions"""
+    try:
+        schema_result = get_universal_schema()
+        if not schema_result["success"]:
+            return domain_terms
+        
+        # Get all column names from all tables
+        valid_columns = set()
+        for table_name, columns in schema_result["tables"].items():
+            for col in columns:
+                valid_columns.add(col["name"])
+        
+        validated_terms = {}
+        for term, sql_fragment in domain_terms.items():
+            # Extract potential column references from SQL fragment
+            import re
+            potential_columns = re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', sql_fragment)
+            
+            missing_columns = [col for col in potential_columns if col not in valid_columns and col not in ['SELECT', 'FROM', 'WHERE', 'GROUP', 'BY', 'ORDER', 'LIMIT', 'COUNT', 'SUM', 'AVG']]
+            
+            if missing_columns:
+                # Try to suggest JOINs for missing columns
+                join_suggestions = []
+                for missing_col in missing_columns:
+                    join_clause = suggest_join_for_missing_column(missing_col)
+                    if join_clause:
+                        join_suggestions.append(join_clause)
+                        print(f"🔗 Auto-join suggestion for '{term}': {join_clause}")
+                
+                if join_suggestions:
+                    # Enhance the SQL fragment with JOIN suggestions
+                    enhanced_sql = sql_fragment + f" -- Suggested JOINs: {'; '.join(join_suggestions)}"
+                    validated_terms[term] = enhanced_sql
+                else:
+                    print(f"⚠️ Semantic validation warning: '{term}' references missing columns: {missing_columns}")
+                    validated_terms[term] = sql_fragment
+            else:
+                validated_terms[term] = sql_fragment
+        
+        return validated_terms
+        
+    except Exception as e:
+        print(f"Semantic validation error: {e}")
+        return domain_terms
 
 # Global domain configuration
 domain_config = load_domain_config()
@@ -1256,9 +1368,9 @@ def _initialize_module():
     global semantic_dict
     try:
         init_result = initialize_universal_agent()
-        logger.info(f"Universal SQL Agent initialized: {init_result}")
+        print(f"Universal SQL Agent initialized: {init_result}")
     except Exception as e:
-        logger.error(f"Failed to initialize universal agent: {e}")
+        print(f"Failed to initialize universal agent: {e}")
         # Fallback to basic semantic dictionary
         semantic_dict = UniversalSemanticDictionary()
 
@@ -1641,7 +1753,12 @@ def query_database_with_validation(question: str, chat_history: list = None, cur
                 context += f"\nPrevious query: {msg.get('question', '')} → {msg.get('sql', '')}"
     
     # STEP 4: Check if database-related
-    db_keywords = ['transaction', 'amount', 'count', 'total', 'sum', 'show', 'list', 'how many', 'what is', 'find', 'search', 'visualize', 'chart', 'graph', 'pie', 'bar']
+    db_keywords = [
+        'transaction', 'amount', 'count', 'total', 'sum', 'show', 'list', 
+        'how many', 'what is', 'find', 'search', 'visualize', 'chart', 'graph', 
+        'pie', 'bar', 'who', 'biggest', 'top', 'client', 'customer', 'largest', 
+        'highest', 'most', 'best', 'worst', 'average', 'mean', 'sender', 'receiver'
+    ]
     if not any(keyword in question_lower for keyword in db_keywords):
         return {
             "question": question,
