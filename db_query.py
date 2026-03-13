@@ -2180,19 +2180,15 @@ def query_database_with_semantic_layer(question: str, chat_history: list = None,
     if "visualization" in plan:
         plan["visualization"] = get_best_viz(plan, results)
     
-    # STEP 6: Format Answer with Currency
+    # STEP 6: Format Answer with LLM-generated response
     answer = format_advanced_answer(question, results, plan, currency)
     
-    # STEP 7: Create Markdown Table with Currency
+    # STEP 7: Create Markdown Table only if 2+ rows
     markdown_table = create_markdown_table(results, currency)
     
-    # STEP 8: Generate suggested prompts for zero results
-    suggested_prompts = generate_suggested_prompts(question, results)
-    
-    # STEP 9: Create Chart Config with Best Visualization
+    # STEP 8: Create Chart Config only if explicitly requested
     chart_config = {}
-    best_viz = get_best_viz(plan, results)
-    if best_viz in ["pie_chart", "bar_chart", "line_chart"] and len(results.get("columns", [])) == 2:
+    if should_show_chart(question, results) and len(results.get("columns", [])) == 2:
         chart_data = {}
         for row in results.get("rows", []):
             if len(row) >= 2:
@@ -2205,13 +2201,18 @@ def query_database_with_semantic_layer(question: str, chat_history: list = None,
         
         if chart_data:
             chart_config = {
-                "type": best_viz,
+                "type": "bar_chart",
                 "data": chart_data,
                 "title": plan.get("explanation", "Data Analysis"),
                 "x_label": results["columns"][0],
                 "y_label": results["columns"][1],
                 "auto_detected": True
             }
+    
+    # STEP 9: Determine suggested visualizations
+    suggested_visualizations = ["table"] if should_show_table(results) else []
+    if should_show_chart(question, results) and len(results.get("columns", [])) == 2:
+        suggested_visualizations.extend(["bar_chart", "pie_chart"])
     
     # STEP 10: Store Metadata
     metadata = {
@@ -2234,8 +2235,19 @@ def query_database_with_semantic_layer(question: str, chat_history: list = None,
         "answer": answer,
         "markdown_table": markdown_table,
         "chart_config": chart_config,
-        "suggested_prompts": suggested_prompts,
-        "metadata": metadata
+        "suggested_visualizations": suggested_visualizations,
+        "metadata": {
+            "question": question,
+            "sql": results.get("sql_used", sql),
+            "plan": plan,
+            "row_count": len(results.get("rows", [])),
+            "columns": results.get("columns", []),
+            "analysis_type": plan.get("analysis_type", "unknown"),
+            "visualization_type": "bar_chart" if chart_config else "table",
+            "has_chart": bool(chart_config),
+            "show_table": should_show_table(results),
+            "show_chart": should_show_chart(question, results)
+        }
     }
 
 # SEMANTIC LAYER UTILITIES
