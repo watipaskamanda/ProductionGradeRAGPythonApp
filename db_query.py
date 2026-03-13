@@ -1047,16 +1047,28 @@ def format_currency(value, currency="MWK"):
     else:
         return f"${value:,.2f}"
 
+def should_show_table(query_result: dict) -> bool:
+    """Determine if table should be shown - only for 2+ rows"""
+    return "error" not in query_result and len(query_result.get("rows", [])) >= 2
+
+def should_show_chart(question: str, query_result: dict) -> bool:
+    """Determine if chart should be shown - only when explicitly requested"""
+    if "error" in query_result or len(query_result.get("rows", [])) < 2:
+        return False
+    
+    # Check for visualization keywords in the question
+    question_lower = question.lower()
+    chart_keywords = ['chart', 'graph', 'plot', 'visualize', 'show me visually', 'visual']
+    
+    return any(keyword in question_lower for keyword in chart_keywords)
+
 def create_markdown_table(query_result: dict, currency="MWK") -> str:
-    """Generate markdown table from query results with currency formatting."""
-    if "error" in query_result or not query_result.get("rows"):
+    """Generate markdown table from query results - only if should show table"""
+    if not should_show_table(query_result):
         return ""
     
     columns = query_result["columns"]
     rows = query_result["rows"]
-    
-    if not rows:
-        return "No data to display."
     
     header = "| " + " | ".join(columns) + " |"
     separator = "| " + " | ".join(["---"] * len(columns)) + " |"
@@ -1069,7 +1081,6 @@ def create_markdown_table(query_result: dict, currency="MWK") -> str:
             if any(word in col_name for word in ['amount', 'sum', 'total', 'balance']) and isinstance(cell, (int, float)):
                 formatted_row.append(format_currency(cell, currency))
             elif isinstance(cell, (int, float)) and cell > 1000:
-                # Fix: Safely format large numbers with comma separator
                 if isinstance(cell, float):
                     formatted_row.append(f"{cell:,.2f}")
                 else:
@@ -1086,112 +1097,93 @@ def create_markdown_table(query_result: dict, currency="MWK") -> str:
     return table
 
 def format_advanced_answer(question: str, query_result: dict, plan: dict, currency="MWK", suggested_visualizations=None) -> str:
-    """Create clean, final response string that interprets the actual database results."""
+    """Generate conversational answer using LLM based on query results"""
     if "error" in query_result:
         attempts = query_result.get("attempts", 1)
         if attempts > 1:
             return f"After {attempts} attempts to fix the SQL, I encountered an error: {query_result['error']}"
         return f"Error: {query_result['error']}"
     
-    question_lower = question.lower()
-    analysis_type = plan.get("analysis_type", "unknown")
+    # Prepare results summary for LLM
+    row_count = len(query_result.get('rows', []))
+    columns = query_result.get('columns', [])
+    rows = query_result.get('rows', [])
     
-    # Handle single value results (counts, sums, etc.)
-    if len(query_result['rows']) == 1 and len(query_result['rows'][0]) == 1:
-        value = query_result['rows'][0][0]
-        
-        # Count queries
-        if analysis_type == "count" or any(word in question_lower for word in ['how many', 'count']):
-            if 'july' in question_lower and '2025' in question_lower:
-                formatted_value = f"{int(value):,}" if isinstance(value, (int, float)) else str(value)
-                return f"There was {formatted_value} transaction in July 2025."
-            elif 'february' in question_lower:
-                formatted_value = f"{int(value):,}" if isinstance(value, (int, float)) else str(value)
-                transaction_word = "transaction" if int(value) == 1 else "transactions"
-                return f"There {'was' if int(value) == 1 else 'were'} {formatted_value} {transaction_word} in February 2026."
-            elif isinstance(value, (int, float)):
-                formatted_value = f"{int(value):,}"
-                transaction_word = "transaction" if int(value) == 1 else "transactions"
-                return f"There {'was' if int(value) == 1 else 'were'} {formatted_value} {transaction_word}."
-            else:
-                transaction_word = "transaction" if str(value) == "1" else "transactions"
-                return f"There {'was' if str(value) == '1' else 'were'} {value} {transaction_word}."
-        
-        # Sum/amount queries
-        elif analysis_type == "sum" or any(word in question_lower for word in ['total', 'sum', 'amount']):
-            return f"The total amount is {format_currency(value, currency)}."
-        
-        # Other single value results
+    if row_count == 0:
+        results_summary = "No data found matching the criteria."
+    elif row_count == 1 and len(columns) == 1:
+        # Single value result
+        value = rows[0][0]
+        if isinstance(value, (int, float)):
+            formatted_value = f"{value:,}" if isinstance(value, int) else f"{value:,.2f}"
         else:
+            formatted_value = str(value)
+        results_summary = f"Single result: {columns[0]} = {formatted_value}"
+    else:
+        # Multiple rows/columns
+        results_summary = f"Found {row_count} records with columns: {', '.join(columns)}. "
+        if row_count <= 5:
+            # Include actual data for small result sets
+            data_preview = []
+            for row in rows:
+                row_data = []
+                for i, cell in enumerate(row):
+                    if isinstance(cell, (int, float)) and cell > 1000:
+                        formatted_cell = f"{cell:,}" if isinstance(cell, int) else f"{cell:,.2f}"
+                    else:
+                        formatted_cell = str(cell) if cell is not None else "null"
+                    row_data.append(f"{columns[i]}: {formatted_cell}")
+                data_preview.append("(" + ", ".join(row_data) + ")")
+            results_summary += "Data: " + "; ".join(data_preview)
+        else:
+            # Just summary for large result sets
+            results_summary += f"Sample from first row: "
+            sample_data = []
+            for i, cell in enumerate(rows[0]):
+                if isinstance(cell, (int, float)) and cell > 1000:
+                    formatted_cell = f"{cell:,}" if isinstance(cell, int) else f"{cell:,.2f}"
+                else:
+                    formatted_cell = str(cell) if cell is not None else "null"
+                sample_data.append(f"{columns[i]}: {formatted_cell}")
+            results_summary += ", ".join(sample_data)
+    
+    # System prompt for conversational response
+    system_prompt = """You are BIZINEZI AI, a friendly financial assistant for PayMaart. Given the user's question and the database results, provide a conversational 1-2 sentence answer that directly addresses what was asked. Use natural language, format numbers with commas, include the currency MWK where relevant, and end with one relevant follow-up suggestion. Never say "There were X transactions" — instead say something natural like "In 2025, PayMaart processed 6 G2P transactions."""
+    
+    # User prompt with context
+    user_prompt = f"""Question: {question}
+Database Results: {results_summary}
+Currency: {currency}
+
+Provide a natural, conversational response that directly answers the question based on these results."""
+    
+    try:
+        # Use the unified LLM client
+        response = llm_client.chat_completion(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            max_tokens=150,
+            temperature=0.3
+        )
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"LLM response generation failed: {e}")
+        # Fallback to simple response
+        if row_count == 0:
+            return "I couldn't find any matching data for your query."
+        elif row_count == 1 and len(columns) == 1:
+            value = rows[0][0]
             if isinstance(value, (int, float)):
-                formatted_value = f"{int(value):,}" if isinstance(value, int) else f"{float(value):,.2f}"
+                formatted_value = f"{value:,}" if isinstance(value, int) else f"{value:,.2f}"
                 return f"The result is {formatted_value}."
             else:
                 return f"The result is {value}."
-    
-    # Handle multiple row results
-    row_count = len(query_result['rows'])
-    if row_count == 0:
-        # Create helpful no results message
-        helpful_message = "I couldn't find any"
-        
-        # Extract context from the question to make it more specific
-        if 'payout' in question_lower:
-            helpful_message += " payout transactions"
-        elif 'pay_in' in question_lower or 'pay in' in question_lower:
-            helpful_message += " pay-in transactions"
-        elif 'settlement' in question_lower:
-            helpful_message += " settlement transactions"
-        elif 'float' in question_lower:
-            helpful_message += " float transactions"
-        elif 'credit' in question_lower:
-            helpful_message += " credit transactions"
-        elif 'debit' in question_lower:
-            helpful_message += " debit transactions"
-        elif 'high value' in question_lower:
-            helpful_message += " high value transactions"
-        elif 'transaction' in question_lower:
-            helpful_message += " transactions"
         else:
-            helpful_message += " data"
-        
-        # Add time period context
-        months = ['january', 'february', 'march', 'april', 'may', 'june',
-                 'july', 'august', 'september', 'october', 'november', 'december']
-        found_month = None
-        for month in months:
-            if month in question_lower:
-                found_month = month.capitalize()
-                break
-        
-        import re
-        year_match = re.search(r'\b(20\d{2})\b', question_lower)
-        found_year = year_match.group(1) if year_match else None
-        
-        if found_month and found_year:
-            helpful_message += f" in {found_month} {found_year}"
-        elif found_month:
-            helpful_message += f" in {found_month}"
-        elif found_year:
-            helpful_message += f" in {found_year}"
-        
-        helpful_message += ". There may not be data for that period."
-        
-        # Add helpful suggestions
-        if found_month or found_year:
-            if found_month and found_year:
-                helpful_message += " Would you like to check a different month or year?"
-            elif found_month:
-                helpful_message += " Would you like to check a different month?"
-            elif found_year:
-                helpful_message += " Would you like to check a different year?"
-        else:
-            helpful_message += " Would you like to try a different search?"
-        
-        return helpful_message
-    else:
-        result_word = "result" if row_count == 1 else "results"
-        return f"Here is the breakdown with {row_count} {result_word}."
+            return f"I found {row_count} results for your query."
 
 def generate_suggested_prompts(question: str, query_result: dict) -> list:
     """Generate contextual suggested prompts when no results are found."""
