@@ -268,7 +268,9 @@ class DynamicPromptGenerator:
     
     def __init__(self, schema_reflector: SchemaReflector):
         self.schema_reflector = schema_reflector
-        self.llm_client = get_llm_client()
+        # Initialize the LLM client fresh to ensure Gemini is available
+        from unified_llm_client import UnifiedLLMClient
+        self.llm_client = UnifiedLLMClient()
     
     def generate_system_prompt(self) -> str:
         """Generate system prompt with current schema"""
@@ -325,7 +327,9 @@ class EnterpriseDBConnector:
         self.tenant_config = TenantConfig(tenant_id)
         self.schema_reflector = SchemaReflector(self.tenant_config)
         self.prompt_generator = DynamicPromptGenerator(self.schema_reflector)
-        self.llm_client = get_llm_client()
+        # Initialize a fresh LLM client to ensure Gemini is available
+        from unified_llm_client import UnifiedLLMClient
+        self.llm_client = UnifiedLLMClient()
         
         # Initialize schema on startup
         self.refresh_schema()
@@ -417,7 +421,6 @@ Return only the PostgreSQL SQL query:"""
                     {"role": "system", "content": system_prompt + "\n\nCRITICAL: NEVER use SQLite functions. For TEXT Unix timestamps, ALWAYS cast to double precision first: column::double precision, then TO_TIMESTAMP(column::double precision). Use ONLY PostgreSQL syntax."},
                     {"role": "user", "content": user_prompt}
                 ],
-                model="llama-3.3-70b-versatile",
                 max_tokens=300,
                 temperature=0.1
             )
@@ -426,9 +429,10 @@ Return only the PostgreSQL SQL query:"""
             return sql.replace("```sql", "").replace("```", "").strip()
             
         except Exception as e:
-            # The unified client already handles rate limits and provides user-friendly messages
-            logger.error(f"LLM API error for tenant {self.tenant_id}: {e}")
-            raise e
+            # Log the actual error for debugging
+            logger.error(f"LLM API error for tenant {self.tenant_id}: {str(e)}")
+            # Re-raise the exception to let the caller handle it
+            raise Exception(str(e))
     
     def execute_query(self, sql: str) -> Dict[str, Any]:
         """Execute SQL query with error handling"""
