@@ -1,0 +1,40 @@
+{
+  "tenant_id": "retail_chain",
+  "business_name": "Global Retail Chain",
+  "domain_context": "retail_analytics",
+  "database": {
+    "host": "retail-db.company.com",
+    "database": "retail_analytics",
+    "user": "retail_user",
+    "password": "retail_password",
+    "port": "5432",
+    "driver": "postgresql"
+  },
+  "active_table": "sales_transactions",
+  "approved_tables": [
+    "sales_transactions",
+    "products",
+    "customers",
+    "stores",
+    "inventory"
+  ],
+  "domain_terms": {
+    "high_value": "total_amount > 1000",
+    "recent": "transaction_date > CURRENT_DATE - INTERVAL '30 days'",
+    "online_sales": "channel = 'online'",
+    "in_store_sales": "channel = 'in_store'",
+    "premium_customers": "customer_tier = 'premium'",
+    "top_products": "product_category IN ('electronics', 'luxury')",
+    "this_quarter": "EXTRACT(QUARTER FROM transaction_date) = EXTRACT(QUARTER FROM CURRENT_DATE)",
+    "peak_hours": "EXTRACT(HOUR FROM transaction_time) BETWEEN 18 AND 21"
+  },
+  "business_language": {
+    "primary_entity": "sales",
+    "currency": "USD"
+  },
+  "security": {
+    "max_rows_per_query": 50000,
+    "allowed_operations": ["SELECT"],
+    "restricted_columns": ["customer_ssn", "credit_card_number", "personal_data"]
+  }
+}

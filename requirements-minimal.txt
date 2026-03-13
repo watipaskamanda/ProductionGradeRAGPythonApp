@@ -1,0 +1,23 @@
+# Core FastAPI dependencies
+fastapi==0.104.1
+uvicorn==0.24.0
+python-dotenv==1.0.0
+pydantic==2.5.0
+
+# AI/ML dependencies
+groq==0.4.1
+sentence-transformers==2.2.2
+
+# Database dependencies
+qdrant-client==1.7.0
+psycopg2-binary==2.9.9
+sqlalchemy==2.0.23
+pymysql==1.1.0
+
+# File handling
+streamlit==1.28.1
+python-multipart==0.0.6
+
+# LlamaIndex (core only)
+llama-index-core==0.10.0
+llama-index-readers-file==0.1.4

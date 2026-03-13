@@ -14,8 +14,15 @@ export interface EnterpriseQueryResponse {
   markdown_table?: string;
   chart_config?: ChartConfig;
   suggested_visualizations?: string[];
+  suggested_prompts?: string[];
   metadata: QueryMetadata;
   debug_info?: DebugInfo;
+  // New fields for raw data table rendering
+  raw_data?: {
+    columns: string[];
+    rows: any[][];
+    total_count: number;
+  };
 }
 
 export interface ChartConfig {
@@ -32,6 +39,11 @@ export interface QueryMetadata {
   has_chart: boolean;
   complexity_score: number;
   auto_debug_triggered: boolean;
+  // Additional metadata for table rendering
+  row_count?: number;
+  columns?: string[];
+  tenant_id?: string;
+  active_table?: string;
 }
 
 export interface DebugInfo {

@@ -1,0 +1,9 @@
+{
+  "revenue": "transaction_type IN ('pay_in', 'g2p_pay_in') AND type = 'credit'",
+  "costs": "transaction_type IN ('payout_approved', 'settlement') AND type = 'debit'",
+  "high_value": "COALESCE(NULLIF(transaction_amount, '')::numeric, 0) > 500000",
+  "recent": "created_at::double precision > EXTRACT(EPOCH FROM NOW() - INTERVAL '30 days')",
+  "sales": "transaction_type IN ('pay_in', 'g2p_pay_in') AND type = 'credit'",
+  "expenses": "transaction_type IN ('payout_approved', 'settlement') AND type = 'debit'",
+  "float_transactions": "transaction_type IN ('float', 'excess_float')"
+}

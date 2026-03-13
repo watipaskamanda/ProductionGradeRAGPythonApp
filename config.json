@@ -1,37 +1,41 @@
 {
   "business_name": "PayMaart Financial Services",
   "domain_context": "financial_transactions",
-  "domain_terms": {
-    "high_value_transaction": "transaction_amount::numeric > 500000",
-    "medium_value_transaction": "transaction_amount::numeric BETWEEN 100000 AND 500000",
-    "low_value_transaction": "transaction_amount::numeric < 100000",
-    "recent_transactions": "created_at::bigint > EXTRACT(EPOCH FROM NOW() - INTERVAL '30 days')",
-    "this_month": "EXTRACT(MONTH FROM TO_TIMESTAMP(created_at::bigint)) = EXTRACT(MONTH FROM CURRENT_DATE)",
-    "last_month": "EXTRACT(MONTH FROM TO_TIMESTAMP(created_at::bigint)) = EXTRACT(MONTH FROM CURRENT_DATE - INTERVAL '1 month')",
-    "payment_transactions": "transaction_type IN ('pay_in', 'g2p_pay_in')",
-    "settlement_transactions": "transaction_type IN ('settlement', 'payout_approved')",
-    "float_transactions": "transaction_type IN ('float', 'excess_float')",
-    "flagged_transactions": "flagged = true",
-    "clean_transactions": "flagged = false",
-    "credit_transactions": "type = 'credit'",
-    "debit_transactions": "type = 'debit'",
-    "positive_balance": "closing_balance::numeric > 0",
-    "negative_balance": "closing_balance::numeric < 0",
-    "large_balance": "closing_balance::numeric > 1000000",
-    "biggest_client": "sender_id GROUP BY sender_id ORDER BY SUM(transaction_amount::numeric) DESC LIMIT 1",
-    "top_client": "sender_id GROUP BY sender_id ORDER BY SUM(transaction_amount::numeric) DESC LIMIT 1",
-    "largest_client": "sender_id GROUP BY sender_id ORDER BY SUM(transaction_amount::numeric) DESC LIMIT 1",
-    "most_active_client": "sender_id GROUP BY sender_id ORDER BY COUNT(*) DESC LIMIT 1",
-    "top_sender": "sender_id GROUP BY sender_id ORDER BY SUM(transaction_amount::numeric) DESC LIMIT 5",
-    "biggest_receiver": "reciever_id GROUP BY reciever_id ORDER BY SUM(transaction_amount::numeric) DESC LIMIT 1",
-    "total_revenue": "SUM(transaction_amount::numeric)",
-    "average_transaction": "AVG(transaction_amount::numeric)",
-    "transaction_count": "COUNT(*)"
-  },
   "business_language": {
     "primary_entity": "transactions",
-    "currency": "MWK",
-    "date_format": "timestamp",
-    "key_metrics": ["transaction_amount", "closing_balance", "transaction_count"]
+    "currency": "MWK"
+  },
+  "business_definitions": {
+    "sales": {
+      "description": "Revenue from payment processing services",
+      "sql_logic": "transaction_type IN ('pay_in', 'g2p_pay_in') AND type = 'credit'",
+      "calculation": "SUM(transaction_amount::numeric)"
+    },
+    "expenses": {
+      "description": "Operational costs and payouts",
+      "sql_logic": "transaction_type IN ('payout_approved', 'settlement') AND type = 'debit'",
+      "calculation": "SUM(transaction_amount::numeric)"
+    },
+    "float_transactions": {
+      "description": "Liquidity management transactions",
+      "sql_logic": "transaction_type IN ('float', 'excess_float')",
+      "calculation": "SUM(transaction_amount::numeric)"
+    },
+    "high_value": {
+      "description": "Transactions above 500,000 MWK",
+      "sql_logic": "transaction_amount::numeric > 500000",
+      "calculation": "COUNT(*) or SUM(transaction_amount::numeric)"
+    },
+    "recent": {
+      "description": "Transactions in the last 30 days",
+      "sql_logic": "created_at::double precision > EXTRACT(EPOCH FROM NOW() - INTERVAL '30 days')",
+      "calculation": "COUNT(*) or SUM(transaction_amount::numeric)"
+    }
+  },
+  "domain_terms": {
+    "revenue": "transaction_type IN ('pay_in', 'g2p_pay_in') AND type = 'credit'",
+    "costs": "transaction_type IN ('payout_approved', 'settlement') AND type = 'debit'",
+    "high_value": "transaction_amount::numeric > 500000",
+    "recent": "created_at::double precision > EXTRACT(EPOCH FROM NOW() - INTERVAL '30 days')"
   }
 }

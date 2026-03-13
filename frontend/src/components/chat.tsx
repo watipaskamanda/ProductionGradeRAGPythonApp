@@ -3,12 +3,27 @@
 import { useState, useRef, useEffect } from 'react'
 import { Send, Paperclip, ArrowUp, Menu, X, Upload, FileText, Settings, History, Database, MessageSquare, User, DollarSign } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
+import { DataTable } from '@/components/ui/data-table'
 
 interface Message {
   id: string
   content: string
   role: 'user' | 'assistant'
   timestamp: Date
+  sql?: string
+  question?: string
+  markdown_table?: string
+  // New fields for raw data table rendering
+  raw_data?: {
+    columns: string[]
+    rows: any[][]
+    total_count: number
+  }
+  // Metadata including suggested prompts
+  metadata?: {
+    suggested_prompts?: string[]
+    [key: string]: any
+  }
 }
 
 const suggestedPrompts = [
@@ -26,6 +41,10 @@ export default function Chat() {
   const [activeTab, setActiveTab] = useState('analytics') // 'analytics' or 'documents'
   const [userLevel, setUserLevel] = useState('business')
   const [currency, setCurrency] = useState('MWK')
+  
+  // Chat history for API context
+  const [chatHistory, setChatHistory] = useState<Array<{role: string, content: string, sql?: string, question?: string}>>([])
+  
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -52,11 +71,30 @@ export default function Chat() {
     setInput('')
     setIsLoading(true)
 
+    // Add user message to chat history BEFORE API call
+    const newChatHistory = [...chatHistory, {
+      role: "user",
+      content: text
+    }]
+
+    // DEBUG: Log chat history state
+    console.log('🔍 Current chatHistory state:', chatHistory)
+    console.log('🔍 New chatHistory being sent:', newChatHistory)
+
     try {
-      const endpoint = activeTab === 'analytics' ? '/api/database' : '/api/chat'
+      const endpoint = activeTab === 'analytics' ? '/api/v1/query/database' : '/api/v1/query'
       const body = activeTab === 'analytics' 
-        ? { question: text, currency, user_level: userLevel }
+        ? { 
+            question: text, 
+            chat_history: newChatHistory, // Send accumulated history
+            currency, 
+            user_level: userLevel 
+          }
         : { message: text }
+
+      // DEBUG: Log full request body
+      console.log('🔍 Full request body being sent:', JSON.stringify(body, null, 2))
+      console.log("Sending chat history:", chatHistory)
 
       const response = await fetch(endpoint, {
         method: 'POST',
@@ -66,16 +104,93 @@ export default function Chat() {
 
       const data = await response.json()
       
+      // DEBUG: Log the full API response to see what we're getting
+      console.log('🔍 Full API response:', data)
+      
+      // Extract raw data for table rendering if available
+      let rawData = null
+      if (activeTab === 'analytics') {
+        // First, check if backend already provided raw_data
+        if (data.raw_data && data.raw_data.columns && data.raw_data.rows) {
+          rawData = data.raw_data
+          console.log('✅ Using raw_data from backend:', rawData)
+        }
+        // Fallback: try to parse markdown table if no raw_data
+        else if (data.metadata && data.metadata.row_count > 0 && data.markdown_table) {
+          console.log('⚠️ Fallback: parsing markdown table')
+          const tableLines = data.markdown_table.split('\n').filter(line => line.trim())
+          if (tableLines.length >= 3) { // Header + separator + at least one data row
+            const headerLine = tableLines[0]
+            const dataLines = tableLines.slice(2) // Skip header and separator
+            
+            // Extract columns from header (remove | and trim)
+            const columns = headerLine.split('|').map(col => col.trim()).filter(col => col)
+            
+            // Extract rows from data lines
+            const rows = dataLines
+              .filter(line => !line.includes('---')) // Skip separator lines
+              .map(line => 
+                line.split('|')
+                  .map(cell => cell.trim())
+                  .filter((cell, index, arr) => index > 0 && index < arr.length - 1) // Remove empty first/last elements
+              )
+              .filter(row => row.length > 0)
+            
+            if (columns.length > 0 && rows.length > 0) {
+              rawData = {
+                columns,
+                rows,
+                total_count: data.metadata.row_count || rows.length
+              }
+              console.log('✅ Parsed raw_data from markdown:', rawData)
+            }
+          }
+        }
+      }
+      
+      console.log('🔍 Final rawData being set:', rawData)
+      
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
-        content: data.response || data.answer || 'I apologize, but I encountered an error processing your request.',
+        content: data.answer || 'I apologize, but I encountered an error processing your request.',
         role: 'assistant',
-        timestamp: new Date()
+        timestamp: new Date(),
+        sql: data.debug_info?.sql || data.sql,
+        question: text,
+        markdown_table: data.markdown_table,
+        raw_data: rawData,
+        metadata: {
+          suggested_prompts: data.suggested_prompts || [],
+          ...data.metadata
+        }
       }
 
       setMessages(prev => [...prev, assistantMessage])
+
+      // Add assistant response to chat history AFTER API call
+      const updatedHistory = [...newChatHistory, {
+        role: "assistant",
+        content: assistantMessage.content,
+        sql: data.sql,
+        question: text
+      }]
+
+      // Keep only last 10 messages to avoid sending too much data
+      if (updatedHistory.length > 10) {
+        setChatHistory(updatedHistory.slice(-10))
+      } else {
+        setChatHistory(updatedHistory)
+      }
+
     } catch (error) {
       console.error('Error:', error)
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        content: 'I encountered an error processing your request. Please try again.',
+        role: 'assistant',
+        timestamp: new Date()
+      }
+      setMessages(prev => [...prev, errorMessage])
     } finally {
       setIsLoading(false)
     }
@@ -134,7 +249,7 @@ export default function Chat() {
             </div>
           ) : (
             /* Messages */
-            <div className="max-w-3xl mx-auto px-4 py-8">
+            <div className="max-w-4xl mx-auto px-4 py-8">
               {messages.map((message) => (
                 <div key={message.id} className="mb-8">
                   <div className={`flex gap-4 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -144,16 +259,96 @@ export default function Chat() {
                       </div>
                     )}
                     
-                    <div className={`max-w-[80%] ${message.role === 'user' ? 'order-first' : ''}`}>
+                    <div className={`max-w-[85%] ${message.role === 'user' ? 'order-first' : ''}`}>
                       <div className={`rounded-2xl px-4 py-3 ${
                         message.role === 'user' 
                           ? 'bg-[#2f2f2f] ml-auto' 
                           : 'bg-transparent'
                       }`}>
                         {message.role === 'assistant' ? (
-                          <ReactMarkdown className="prose prose-invert max-w-none">
-                            {message.content}
-                          </ReactMarkdown>
+                          <div>
+                            <ReactMarkdown className="prose prose-invert max-w-none">
+                              {message.content}
+                            </ReactMarkdown>
+                            
+                            {/* Render suggested prompts for zero results */}
+                            {(() => {
+                              const hasZeroResults = (message.raw_data?.rows?.length === 0) || 
+                                                    (message.markdown_table && message.markdown_table.includes('No data to display')) ||
+                                                    (message.content && message.content.includes("couldn't find any"))
+                              const hasSuggestedPrompts = hasZeroResults && 
+                                                        message.metadata?.suggested_prompts && 
+                                                        message.metadata.suggested_prompts.length > 0
+                              
+                              if (hasSuggestedPrompts) {
+                                return (
+                                  <div className="mt-4 p-4 bg-[#1a1a1a] rounded-lg border border-[#404040]">
+                                    <h4 className="text-sm font-medium text-gray-300 mb-3">Try these suggestions:</h4>
+                                    <div className="flex flex-wrap gap-2">
+                                      {message.metadata!.suggested_prompts!.map((prompt, index) => (
+                                        <button
+                                          key={index}
+                                          onClick={() => handleSubmit(prompt)}
+                                          className="px-3 py-2 text-sm bg-[#2f2f2f] hover:bg-[#404040] text-blue-400 hover:text-blue-300 rounded-lg border border-[#404040] hover:border-[#565656] transition-colors"
+                                        >
+                                          {prompt}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )
+                              }
+                              return null
+                            })()}
+                            
+                            {/* Render DataTable for database analytics mode */}
+                            {(() => {
+                              const shouldRenderTable = activeTab === 'analytics' && message.raw_data && message.raw_data.columns && message.raw_data.rows
+                              console.log('🔍 DataTable render check:', {
+                                activeTab,
+                                hasRawData: !!message.raw_data,
+                                hasColumns: message.raw_data?.columns?.length > 0,
+                                hasRows: message.raw_data?.rows?.length > 0,
+                                shouldRender: shouldRenderTable
+                              })
+                              
+                              if (shouldRenderTable) {
+                                console.log('✅ Rendering DataTable with data:', message.raw_data)
+                                return (
+                                  <div className="mt-6">
+                                    <DataTable
+                                      columns={message.raw_data.columns}
+                                      data={message.raw_data.rows}
+                                      title={`Query Results (${message.raw_data.total_count || message.raw_data.rows.length} total records)`}
+                                      className="border rounded-lg bg-[#1a1a1a] text-white"
+                                    />
+                                  </div>
+                                )
+                              }
+                              return null
+                            })()}
+                            
+                            {/* Fallback to markdown table for non-analytics or when no raw data */}
+                            {(!message.raw_data || activeTab !== 'analytics') && message.markdown_table && (
+                              <div className="mt-4">
+                                <ReactMarkdown className="prose prose-invert max-w-none">
+                                  {message.markdown_table}
+                                </ReactMarkdown>
+                              </div>
+                            )}
+                            
+                            {/* Render SQL query if present */}
+                            {message.sql && (
+                              <details className="mt-4 bg-[#1a1a1a] rounded-lg border border-[#404040]">
+                                <summary className="px-3 py-2 cursor-pointer text-sm text-gray-400 hover:text-gray-300">
+                                  View SQL Query
+                                </summary>
+                                <pre className="px-3 pb-3 text-xs text-green-400 overflow-x-auto">
+                                  <code>{message.sql}</code>
+                                </pre>
+                              </details>
+                            )}
+                          </div>
                         ) : (
                           <p>{message.content}</p>
                         )}
@@ -231,7 +426,7 @@ export default function Chat() {
         </div>
       </div>
 
-      {/* Sidebar */}
+      {/* Sidebar - keeping existing sidebar code unchanged */}
       <div className={`${sidebarOpen ? 'w-80' : 'w-0'} transition-all duration-300 overflow-hidden bg-[#171717] border-l border-[#404040]`}>
         <div className="p-4 h-full">
           <div className="flex items-center justify-between mb-6">

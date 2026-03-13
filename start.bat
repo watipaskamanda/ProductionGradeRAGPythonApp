@@ -14,12 +14,13 @@ timeout /t 5 /nobreak >nul
 
 REM Start API in a new window
 echo [3/4] Starting FastAPI Backend...
-start "RAG API" cmd /k "cd /d %~dp0 && py -3.13 -m uvicorn api:app --host 0.0.0.0 --port 8000 --reload"
+start "RAG API" cmd /k "cd /d %~dp0 && .venv2\Scripts\activate && python -m uvicorn api:app --host 0.0.0.0 --port 8000 --reload"
 timeout /t 3 /nobreak >nul
 
-REM Start Streamlit Chat UI in a new window
-echo [4/4] Starting Streamlit Chat UI...
-start "Streamlit Chat" cmd /k "cd /d %~dp0 && py -3.13 -m streamlit run chat_app.py"
+REM Start React Frontend in a new window
+echo [4/4] Starting React Frontend...
+start "React Frontend" cmd /k "cd /d %~dp0\frontend && npm run dev"
+timeout /t 3 /nobreak >nul
 
 echo.
 echo ========================================
@@ -29,7 +30,10 @@ echo.
 echo PostgreSQL: localhost:5432
 echo Qdrant:     http://localhost:6333
 echo API Docs:   http://localhost:8000/docs
-echo Streamlit Chat: http://localhost:8501
+echo React Frontend: http://localhost:3000
+echo.
+echo All services are running in separate windows.
+echo Close individual windows to stop each service.
 echo.
 echo Press any key to close this window...
 pause >nul

@@ -1,0 +1,35 @@
+{
+  "tenant_id": "default",
+  "business_name": "PayMaart Financial Services",
+  "domain_context": "financial_transactions",
+  "database": {
+    "host": "paymaart.cluster-cv8a0q0uygk3.eu-west-1.rds.amazonaws.com",
+    "database": "paymaart",
+    "user": "paymaartAdmin",
+    "password": "z{gr[ucKyjZll0o=",
+    "port": "5432",
+    "driver": "postgresql"
+  },
+  "active_table": "trust_bank_transaction",
+  "approved_tables": [],
+  "domain_terms": {
+    "high_value": "COALESCE(NULLIF(transaction_amount, '')::numeric, 0) > 500000",
+    "recent": "created_at::double precision > EXTRACT(EPOCH FROM NOW() - INTERVAL '30 days')",
+    "credit_transactions": "type = 'credit'",
+    "debit_transactions": "type = 'debit'",
+    "payment_transactions": "transaction_type IN ('pay_in', 'g2p_pay_in')",
+    "payout_transactions": "transaction_type IN ('payout_approved', 'settlement')",
+    "flagged_transactions": "flagged = true",
+    "this_month": "EXTRACT(MONTH FROM TO_TIMESTAMP(created_at::double precision)) = EXTRACT(MONTH FROM CURRENT_DATE)",
+    "this_year": "EXTRACT(YEAR FROM TO_TIMESTAMP(created_at::double precision)) = EXTRACT(YEAR FROM CURRENT_DATE)"
+  },
+  "business_language": {
+    "primary_entity": "transactions",
+    "currency": "MWK"
+  },
+  "security": {
+    "max_rows_per_query": 10000,
+    "allowed_operations": ["SELECT"],
+    "restricted_columns": ["password", "api_key", "secret"]
+  }
+}

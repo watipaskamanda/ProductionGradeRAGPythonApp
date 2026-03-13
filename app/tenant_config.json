@@ -1,0 +1,99 @@
+{
+  "tenant_id": "paymaart",
+  "business_name": "PayMaart Financial Services",
+  "domain_context": "fintech_payments",
+  "primary_tables": {
+    "transactions": "user_transaction",
+    "agents": "agent_users",
+    "bank_transactions": "trust_bank_transaction",
+    "agent_kyc": "agent_kyc",
+    "customers": "customer_users",
+    "merchants": "merchant_users"
+  },
+  "table_routing": {
+    "agent questions": "agent_users",
+    "how many agents": "agent_users",
+    "agent count": "agent_users",
+    "transaction questions": "user_transaction",
+    "payment questions": "user_transaction",
+    "bank transaction questions": "trust_bank_transaction",
+    "float questions": "trust_bank_transaction",
+    "settlement questions": "trust_bank_transaction",
+    "customer questions": "customer_users",
+    "merchant questions": "merchant_users"
+  },
+  "id_prefixes": {
+    "AGT": "agent_users",
+    "CMR": "customer_users",
+    "MCT": "merchant_users",
+    "PMT": "internal_paymaart_account"
+  },
+  "schema_mappings": {
+    "agent_users": {
+      "id_column": "paymaart_id",
+      "name_columns": ["first_name", "middle_name", "last_name"],
+      "timestamp_column": "created_at",
+      "timestamp_type": "unix_text",
+      "status_column": "status",
+      "active_value": "active"
+    },
+    "user_transaction": {
+      "id_column": "id",
+      "timestamp_column": "created_at",
+      "timestamp_type": "unix_text",
+      "amount_column": "transaction_amount",
+      "type_column": "transaction_type",
+      "direction_column": "type",
+      "sender_column": "sender_id",
+      "receiver_column": "receiver_id",
+      "fee_column": "transaction_fee",
+      "vat_column": "vat"
+    },
+    "trust_bank_transaction": {
+      "id_column": "id",
+      "timestamp_column": "created_at",
+      "timestamp_type": "unix_text",
+      "amount_column": "transaction_amount",
+      "type_column": "transaction_type",
+      "direction_column": "type"
+    }
+  },
+  "timestamp_cast": "TO_TIMESTAMP(REGEXP_REPLACE({column}, '\\.\\d+$', '')::bigint)",
+  "transaction_types": {
+    "user_transaction": ["pay_in", "pay_person", "paymaart", "payout", "g2p_pay_in"],
+    "trust_bank_transaction": ["float", "pay_in", "g2p_pay_in", "payout_approved", "settlement", "excess_float"]
+  },
+  "business_language": {
+    "primary_currency": "MWK",
+    "primary_entity": "transactions",
+    "agent_term": "agent",
+    "customer_term": "customer",
+    "merchant_term": "merchant"
+  },
+  "few_shot_examples": [
+    {
+      "question": "how many agents are there",
+      "sql": "SELECT COUNT(*) FROM agent_users WHERE is_deleted = false"
+    },
+    {
+      "question": "how many active agents are there",
+      "sql": "SELECT COUNT(*) FROM agent_users WHERE status = 'active' AND is_deleted = false"
+    },
+    {
+      "question": "how many transactions were in january 2025",
+      "sql": "SELECT COUNT(*) FROM user_transaction WHERE EXTRACT(MONTH FROM TO_TIMESTAMP(REGEXP_REPLACE(created_at::text, '\\.\\d+$', '')::bigint)) = 1 AND EXTRACT(YEAR FROM TO_TIMESTAMP(REGEXP_REPLACE(created_at::text, '\\.\\d+$', '')::bigint)) = 2025"
+    },
+    {
+      "question": "how many pay-in transactions were in january 2025",
+      "sql": "SELECT COUNT(*) FROM user_transaction WHERE transaction_type = 'pay_in' AND EXTRACT(MONTH FROM TO_TIMESTAMP(REGEXP_REPLACE(created_at::text, '\\.\\d+$', '')::bigint)) = 1 AND EXTRACT(YEAR FROM TO_TIMESTAMP(REGEXP_REPLACE(created_at::text, '\\.\\d+$', '')::bigint)) = 2025"
+    },
+    {
+      "question": "total transaction amount for january 2025",
+      "sql": "SELECT SUM(transaction_amount::numeric) FROM user_transaction WHERE EXTRACT(MONTH FROM TO_TIMESTAMP(REGEXP_REPLACE(created_at::text, '\\.\\d+$', '')::bigint)) = 1 AND EXTRACT(YEAR FROM TO_TIMESTAMP(REGEXP_REPLACE(created_at::text, '\\.\\d+$', '')::bigint)) = 2025"
+    }
+  ],
+  "support_contact": {
+    "email": "support@paymaart.com",
+    "phone": "+265 000 000 000"
+  }
+}
