@@ -1,3 +1,7 @@
+import sys
+import subprocess
+subprocess.run([sys.executable, '-m', 'pip', 'install', 'google-generativeai'], capture_output=True)
+
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse

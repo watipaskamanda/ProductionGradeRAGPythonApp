@@ -90,6 +90,10 @@
     {
       "question": "total transaction amount for january 2025",
       "sql": "SELECT SUM(transaction_amount::numeric) FROM user_transaction WHERE EXTRACT(MONTH FROM TO_TIMESTAMP(REGEXP_REPLACE(created_at::text, '\\.\\d+$', '')::bigint)) = 1 AND EXTRACT(YEAR FROM TO_TIMESTAMP(REGEXP_REPLACE(created_at::text, '\\.\\d+$', '')::bigint)) = 2025"
+    },
+    {
+      "question": "total transaction volume for this month",
+      "sql": "SELECT SUM(transaction_amount::numeric) FROM user_transaction WHERE EXTRACT(MONTH FROM TO_TIMESTAMP(REGEXP_REPLACE(created_at::text, '\\.\\d+', '')::bigint)) = EXTRACT(MONTH FROM CURRENT_DATE) AND EXTRACT(YEAR FROM TO_TIMESTAMP(REGEXP_REPLACE(created_at::text, '\\.\\d+', '')::bigint)) = EXTRACT(YEAR FROM CURRENT_DATE)"
     }
   ],
   "support_contact": {
